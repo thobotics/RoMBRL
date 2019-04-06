@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-    training_dyn.py
+    continual_training_dyn.py
     
     Created on  : February 26, 2019
         Author  : thobotics
@@ -10,9 +10,8 @@
 import numpy as np
 import tensorflow as tf
 from lib.utils.running_mean_std import RunningMeanStd
-# from models.weighted_bnn_dyn import BayesNeuralNetDynModel
 from models.continual_bnn_dyn import BayesNeuralNetDynModel
-from models.weighted_me_dyn import EnsembleNeuralNetDynModel
+from models.continual_me_dyn import EnsembleNeuralNetDynModel
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 
@@ -132,20 +131,12 @@ class TrainingDynamics(object):
 
         return
 
-    def run_bnn(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None, step_size=2.0e-3, mdecay=0.05,
-                burn_in_steps=3000, n_iters=5000, sample_steps=100):
-        # Train model
-
-        # if x_tr_new is not None:
-        #     self._fit(x_tr_new[:, :self.n_outputs], x_tr_new[:, self.n_outputs:], y_tr_new)
+    def _transform_data(self, x_val, y_val, x_tr_new=None, y_tr_new=None):
 
         x_tr_old = self.scaler_xu.transform(self.xu)
         y_tr_old = self.scaler_y.transform(self.y)
         x_val = self.scaler_xu.transform(x_val)
         y_val = self.scaler_y.transform(y_val)
-
-        # x_tr_old = self.xu
-        # y_tr_old = self.y
 
         if x_tr_new is None:
             x_train = x_tr_old
@@ -154,61 +145,29 @@ class TrainingDynamics(object):
             x_train = (x_tr_old, self.scaler_xu.transform(x_tr_new))
             y_train = (y_tr_old, self.scaler_y.transform(y_tr_new))
 
-            # x_train = (x_tr_old, x_tr_new)
-            # y_train = (y_tr_old, y_tr_new)
+        return x_train, y_train, x_val, y_val
+
+    def run_bnn(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None,
+                run_normal=True, normal_step_size=2.0e-3, normal_max_iters=3000,
+                step_size=2.0e-3, mdecay=0.05, burn_in_steps=3000, n_iters=5000, sample_steps=100):
+
+        assert isinstance(self.model, BayesNeuralNetDynModel)
+
+        x_train, y_train, x_val, y_val = self._transform_data(x_val, y_val, x_tr_new, y_tr_new)
+
+        if run_normal:
+            self.model.train_normal(x_train, y_train, x_val, y_val,
+                                    step_size=normal_step_size, max_iters=normal_max_iters)
 
         self.model.train(x_train, y_train, x_val, y_val,
                          step_size=step_size, mdecay=mdecay,
                          burn_in_steps=burn_in_steps, n_iters=n_iters, sample_steps=sample_steps)
 
-        return
-
     def run_normal(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None, step_size=2.0e-3, max_iters=3000):
-        # Train model
 
-        # if x_tr_new is not None:
-        #     self._fit(x_tr_new[:, :self.n_outputs], x_tr_new[:, self.n_outputs:], y_tr_new)
-
-        x_tr_old = self.scaler_xu.transform(self.xu)
-        y_tr_old = self.scaler_y.transform(self.y)
-        x_val = self.scaler_xu.transform(x_val)
-        y_val = self.scaler_y.transform(y_val)
-
-        # x_tr_old = self.xu
-        # y_tr_old = self.y
-
-        if x_tr_new is None:
-            x_train = x_tr_old
-            y_train = y_tr_old
-        else:
-            x_train = (x_tr_old, self.scaler_xu.transform(x_tr_new))
-            y_train = (y_tr_old, self.scaler_y.transform(y_tr_new))
-            # x_train = (x_tr_old, x_tr_new)
-            # y_train = (y_tr_old, y_tr_new)
+        x_train, y_train, x_val, y_val = self._transform_data(x_val, y_val, x_tr_new, y_tr_new)
 
         self.model.train_normal(x_train, y_train, x_val, y_val, step_size=step_size, max_iters=max_iters)
-
-        return
-
-    def run_debugging(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None):
-        x_tr_old = self.scaler_xu.transform(self.xu)
-        y_tr_old = self.scaler_y.transform(self.y)
-        x_val = self.scaler_xu.transform(x_val)
-        y_val = self.scaler_y.transform(y_val)
-
-        # x_tr_old = self.xu
-        # y_tr_old = self.y
-
-        if x_tr_new is None:
-            x_train = x_tr_old
-            y_train = y_tr_old
-        else:
-            x_train = (x_tr_old, self.scaler_xu.transform(x_tr_new))
-            y_train = (y_tr_old, self.scaler_y.transform(y_tr_new))
-            # x_train = (x_tr_old, x_tr_new)
-            # y_train = (y_tr_old, y_tr_new)
-
-        return
 
     def predict(self, x_test, **kwargs):
         x_test = self.scaler_xu.transform(x_test)

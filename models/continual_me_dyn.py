@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-    me_dyn.py
+    continual_me_dyn.py
     
     Created on  : February 26, 2019
         Author  : thobotics
@@ -24,8 +24,8 @@ from lib.pysgmcmc.pysgmcmc.models.base_model import (
 from lib.utils.data_batches import generate_batches, generate_weighted_batches
 
 from models.nnet.architecture import get_default_net
-from models.nnet.loss_function import weight_prior
 from lib.utils.misc import minimize_and_clip
+from models.nnet.loss_function import TrainingLoss
 
 
 # TODO: Abstract this
@@ -67,6 +67,8 @@ class EnsembleNeuralNetDynModel(object):
 
         self._adam_op_opt = []
 
+        self.log_weights = np.zeros((self.batch_size, self.n_nets))
+
         self._initialize_variables(n_inputs, n_outputs, n_units, n_nets)
 
     def get_variable(self, param_name, model_idx):
@@ -96,7 +98,10 @@ class EnsembleNeuralNetDynModel(object):
         self.Y_Minibatch = tf.placeholder(shape=(None, n_outputs),
                                           dtype=self.dtype,
                                           name="Y_Minibatch")
-        self.online_train = tf.placeholder_with_default(False, shape=[], name="online_train")
+        self.Weight_Minibatch = tf.placeholder(shape=(None, self.n_nets),
+                                               dtype=self.dtype,
+                                               name="Weight_Minibatch")
+        self.continual_train = tf.placeholder_with_default(False, shape=[], name="continual_train")
         self.n_datapoints = tf.placeholder(dtype=tf.int32, shape=[], name="n_datapoints")
 
         # setup params for covariances and neural network parameters
@@ -120,19 +125,14 @@ class EnsembleNeuralNetDynModel(object):
 
             with tf.variable_scope(model_scope):
 
-                # self.log_Q.append(tf.Variable(
-                #     np.log(np.random.gamma(self.a0, self.b0)) * tf.ones([1, n_outputs]), dtype=self.dtype,
-                #     name="log_Q",
-                # ))  # default 2.0; 0.1
-
                 self.log_Q.append(tf.Variable(
                     np.log(self.b0) * tf.ones([1, n_outputs]), dtype=self.dtype,
-                    name="log_Q", #trainable=False,
-                ))  # default 2.0; 0.1
+                    name="log_Q",
+                ))
 
                 self.log_lambda.append(tf.Variable(
                     np.log(np.random.gamma(self.a1, self.b1)), dtype=self.dtype,
-                    name="log_lambda", #trainable=False,
+                    name="log_lambda",
                 ))
 
                 net_output = self.get_net(inputs=X_input, n_outputs=n_outputs,  n_units=n_units,
@@ -152,17 +152,25 @@ class EnsembleNeuralNetDynModel(object):
 
         """ Create optimizers """
 
-        self.Nll, self.Mse = [], []
+        self.training_loss, self.Nll, self.Mse, self.log_likelihood = [], [], [], []
 
         # set up tensors for negative log likelihood and mean squared error
         for i in range(self.n_nets):
-            self.Nll.append(self.negative_log_likelihood(
-                X=self.X_Minibatch, Y=self.Y_Minibatch, model_idx=i
-            ))
 
-            self.Mse.append(self.mean_square_error(
-                X=self.X_Minibatch, Y=self.Y_Minibatch, model_idx=i
-            ))
+            self.training_loss.append(TrainingLoss(y_logit=self.f_output[i], y_true=self.Y_Minibatch,
+                                                   log_Q=self.log_Q[i], log_lambda=self.log_lambda[i],
+                                                   a0=self.a0, b0=self.b0, a1=self.a1, b1=self.b1,
+                                                   network_params=self.network_params[i],
+                                                   n_datapoints_placeholder=self.n_datapoints,
+                                                   weight_placeholder=self.Weight_Minibatch,
+                                                   continual_train=self.continual_train, continual_method="kl",
+                                                   batch_size=self.batch_size, dtype=self.dtype))
+
+            self.Nll.append(self.training_loss[i].negative_log_posterior())
+
+            self.Mse.append(self.training_loss[i].mse())
+
+            self.log_likelihood.append(self.training_loss[i].log_likehood())
 
             with tf.variable_scope('adam_' + self.tf_scope):
                 _prediction_opt = tf.train.AdamOptimizer(learning_rate=1e-3)
@@ -186,175 +194,111 @@ class EnsembleNeuralNetDynModel(object):
 
         self.session.run(self.dynamics_adam_init)
 
-    def mean_square_error(self, X, Y, model_idx=0):
-        f_mean = self.f_output[model_idx]
+    def _compute_weights(self, X, y):
 
-        y_diff = Y - f_mean
-        mse = tf.reduce_sum(tf.square(y_diff), axis=1)
+        if type(X) == tuple:
+            x_train = np.vstack([X[0], X[1]])
+            y_train = np.vstack([y[0], y[1]])
+        else:
+            x_train = X
+            y_train = y
 
-        return tf.reduce_mean(mse)
+        self.log_weights = np.zeros((x_train.shape[0], self.n_nets))
 
-    def negative_log_likelihood(self, X, Y, model_idx=0):
-        """ Compute the negative log likelihood of the
-            current network parameters with respect to inputs `X` with
-            labels `Y`.
+        for i in range(self.n_nets):
+            params = [var.eval() for var in self.network_params[i]]
+
+            feed_dict = dict(zip(self.network_params[i], params))
+            feed_dict[self.X_Minibatch] = x_train
+            feed_dict[self.Y_Minibatch] = y_train
+
+            self.log_weights[:, i] = self.session.run(self.log_likelihood[i], feed_dict=feed_dict)
+
+    def log_full_training_error(self, x_batch, y_batch, X_val, y_val,
+                                start_time, iteration_index):
+
+        """ Compute the error of our last sampled network parameters
+            on the full training dataset and use `logging.info` to
+            log it. The boolean flag `sampling` is used to determine
+            whether we are already collecting sampled networks, in which
+            case additional info is logged using `logging.info`.
 
         Parameters
         ----------
-        X : tensorflow.Placeholder
-            Placeholder for input datapoints.
-
-        Y : tensorflow.Placeholder
-            Placeholder for input labels.
-
-        Returns
-        -------
-        neg_log_like: tensorflow.Tensor
-            Negative log likelihood of the current network parameters with
-            respect to inputs `X` with labels `Y`.
-
-
-        mse: tensorflow.Tensor
-            Mean squared error of the current network parameters
-            with respect to inputs `X` with labels `Y`.
+        is_sampling : bool
+            Boolean flag that specifies if we are already
+            collecting samples or if we are still doing burn-in steps.
+            If set to `True` we will also log the total number
+            of samples collected thus far.
 
         """
 
-        f_mean = self.f_output[model_idx]
-
-        n_datapoints = tf.cast(self.n_datapoints, self.dtype)  # tf.cast(tf.shape(Y)[0], self.dtype)*2
-
-        # Diagonal covariance
-        log_Q = self.log_Q[model_idx]
-        log_lambda = self.log_lambda[model_idx]
-
-        # Inverse with diagonal matrix
-        inv_Q = 1. / (tf.exp(log_Q) + 1e-16)
-        inv_lambda = 1. / (tf.exp(log_lambda) + 1e-16)
-
-        # Construct prior
-        log_prior_w, log_prior_lambda = weight_prior(
-            self.network_params[model_idx], log_lambda, inv_lambda,
-            self.a1, self.b1, self.dtype
+        total_nll, total_mse = self.session.run(
+            [self.Nll, self.Mse], feed_dict={
+                self.X_Minibatch: x_batch,
+                self.Y_Minibatch: y_batch,
+                self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
+                self.n_datapoints: x_batch.shape[0],
+            }
+        )
+        total_nll_val, total_mse_val = self.session.run(
+            [self.Nll, self.Mse], feed_dict={
+                self.X_Minibatch: X_val,
+                self.Y_Minibatch: y_val,
+                self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
+                self.n_datapoints: X_val.shape[0],
+            }
         )
 
-        # Define the log posterior distribution
-        def weighted_posterior(Y):
-            y_diff = (Y[:self.batch_size] - f_mean[:self.batch_size],
-                      Y[self.batch_size:] - f_mean[self.batch_size:])
+        seconds_elapsed = time() - start_time
 
-            log_lik_data_old = -0.5 * (
-                    tf.reduce_sum(tf.multiply(tf.multiply(y_diff[0], inv_Q), y_diff[0]), axis=1) +
-                    tf.reduce_sum(log_Q, axis=1))
-
-            log_lik_data_new = -0.5 * (
-                    tf.reduce_sum(tf.multiply(tf.multiply(y_diff[1], inv_Q), y_diff[1]), axis=1) +
-                    tf.reduce_sum(log_Q, axis=1))
-
-            log_lik_data = 1e-1 * tf.reduce_mean(log_lik_data_old) + \
-                           tf.reduce_mean(log_lik_data_new)
-
-            return log_lik_data
-
-        def normal_posterior(Y):
-            y_diff = Y - f_mean
-
-            log_lik_data = -0.5 * (
-                    tf.reduce_sum(tf.multiply(tf.multiply(y_diff, inv_Q), y_diff), axis=1) + tf.reduce_sum(log_Q,
-                                                                                                           axis=1))
-            return tf.reduce_mean(log_lik_data)
-
-        log_lik_data = tf.cond(self.online_train,  # tf.shape(Y)[0] > self.batch_size,
-                               lambda: weighted_posterior(Y),
-                               lambda: normal_posterior(Y))
-
-        log_prior_data = (1 - self.a0) * tf.reduce_sum(log_Q) - self.b0 * tf.reduce_sum(inv_Q)
-
-        log_posterior = log_lik_data + log_prior_data / n_datapoints
-        log_posterior += log_prior_w / n_datapoints + log_prior_lambda / n_datapoints
-
-        # y_diff = Y - f_mean
-        #
-        # log_lik_data = -0.5 * (
-        #             tf.reduce_sum(tf.multiply(tf.multiply(y_diff, inv_Q), y_diff), axis=1) + tf.reduce_sum(log_Q,
-        #                                                                                                    axis=1))
-        # log_prior_data = (1 - self.a0) * tf.reduce_sum(log_Q) - self.b0 * tf.reduce_sum(inv_Q)
-        #
-        # # log_lik_data = -0.5 * (tf.reduce_sum(tf.square(y_diff), axis=1))
-        # # log_prior_data = 0.0
-        #
-        # log_posterior = tf.reduce_mean(log_lik_data) + log_prior_data / n_datapoints
-        # log_posterior += log_prior_w / n_datapoints + log_prior_lambda / n_datapoints
-
-        return -log_posterior
+        logging.info("Iter {:8d} : \n"
+                     "\tNLL     = {} \n"
+                     "\tNLL_val = {} \n"
+                     "\tMSE     = {} \n"
+                     "\tMSE_val = {} \n"
+                     "Time = {:5.2f}".format(
+            iteration_index, total_nll, total_nll_val,
+            total_mse, total_mse_val, seconds_elapsed))
 
     def train_normal(self, X, y, X_val=None, y_val=None, step_size=1e-3, max_iters=8000):
         start_time = time()
 
         """ Create optimizer """
 
-        self.X, self.y = X, y
-
-        if type(self.X) == tuple:
+        if type(X) == tuple:
             generator = self.batch_generator(
-                x=self.X[0], x_new=self.X[1], x_placeholder=self.X_Minibatch,
-                y=self.y[0], y_new=self.y[1], y_placeholder=self.Y_Minibatch,
-                online_placeholder=self.online_train,
+                x=X[0], x_new=X[1], x_placeholder=self.X_Minibatch,
+                y=y[0], y_new=y[1], y_placeholder=self.Y_Minibatch,
+                weight=self.log_weights, weight_placeholder=self.Weight_Minibatch,
                 n_points_placeholder=self.n_datapoints,
+                continual_placeholder=self.continual_train,
                 batch_size=self.batch_size,
                 seed=self.seed
             )
 
-            x_batch = np.vstack([self.X[0], self.X[1]])
-            y_batch = np.vstack([self.y[0], self.y[1]])
-
-            n_train_datapoints = self.X[0].shape[0] + self.X[1].shape[0]
+            x_batch = np.vstack([X[0], X[1]])
+            y_batch = np.vstack([y[0], y[1]])
 
         else:
             generator = self.batch_generator(
-                x=self.X, x_placeholder=self.X_Minibatch,
-                y=self.y, y_placeholder=self.Y_Minibatch,
-                online_placeholder=self.online_train,
+                x=X, x_placeholder=self.X_Minibatch,
+                y=y, y_placeholder=self.Y_Minibatch,
+                weight=self.log_weights, weight_placeholder=self.Weight_Minibatch,
                 n_points_placeholder=self.n_datapoints,
+                continual_placeholder=self.continual_train,
                 batch_size=self.batch_size,
                 seed=self.seed
             )
 
-            x_batch = self.X
-            y_batch = self.y
-
-            n_train_datapoints = self.X.shape[0]
+            x_batch = X
+            y_batch = y
 
         # Reinitialize adam
         logging.info("Reinitialize dynamics Adam")
         self.session.run(self.dynamics_adam_init)
 
         logging.info("Start Training")
-
-        def log_full_training_error(iteration_index):
-            total_nll, total_mse = self.session.run(
-                [self.Nll, self.Mse], feed_dict={
-                    self.X_Minibatch: x_batch,
-                    self.Y_Minibatch: y_batch,
-                    self.n_datapoints: n_train_datapoints
-                }
-            )
-            total_nll_val, total_mse_val = self.session.run(
-                [self.Nll, self.Mse], feed_dict={
-                    self.X_Minibatch: X_val,
-                    self.Y_Minibatch: y_val,
-                    self.n_datapoints: X_val.shape[0]
-                }
-            )
-            seconds_elapsed = time() - start_time
-
-            logging.info("Iter {:8d} : \n"
-                         "\tNLL     = {} \n"
-                         "\tNLL_val = {} \n"
-                         "\tMSE     = {} \n"
-                         "\tMSE_val = {} \n"
-                         "Time = {:5.2f}".format(
-                iteration_index, total_nll, total_nll_val, total_mse, total_mse_val, seconds_elapsed))
 
         for j in range(0, max_iters + 1):
 
@@ -363,9 +307,13 @@ class EnsembleNeuralNetDynModel(object):
                 _, training_loss = self.session.run([self._adam_op_opt[i], self.Nll[i]], batch_dict)
 
             if j % 250 == 0:
-                log_full_training_error(j)
+                self.log_full_training_error(x_batch, y_batch, X_val, y_val,
+                                             iteration_index=j, start_time=start_time)
 
         self.is_trained = True
+
+        # Compute log likelihood and predict params of all models
+        self._compute_weights(X, y)
 
     def predict(self, X_test, return_individual_predictions=True, model_idx=None, *args, **kwargs):
         """

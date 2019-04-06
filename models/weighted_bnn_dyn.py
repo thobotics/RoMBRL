@@ -14,6 +14,7 @@ from collections import deque
 import itertools
 import logging
 from time import time
+import gc
 import numpy as np
 import tensorflow as tf
 
@@ -337,7 +338,8 @@ class BayesNeuralNetDynModel(object):
                 self.pred_output.append(self.X_Minibatch[:, :n_outputs] + net_output)
 
         self.pred_network_params = tf.global_variables("predict_dynamics")
-        self.assign_pred_params = [None for _ in self.pred_network_params]
+        # self.assign_pred_params = [None for _ in self.pred_network_params]
+        self.assign_pred_params = deque(maxlen=len(self.pred_network_params))
 
         self.session.run(tf.variables_initializer(self.pred_network_params))
 
@@ -356,7 +358,7 @@ class BayesNeuralNetDynModel(object):
 
         """
 
-        self.X, self.y = X, y
+        # self.X, self.y = X, y
         # n_datapoints, n_inputs = self.X.shape
 
         # # set up tensors for negative log likelihood and mean squared error
@@ -382,10 +384,10 @@ class BayesNeuralNetDynModel(object):
         #
         # self.network_params = [i for j, i in enumerate(self.network_params) if j not in del_idx]
 
-        if type(self.X) == tuple:
+        if type(X) == tuple:
             generator = self.batch_generator(
-                x=self.X[0], x_new=self.X[1], x_placeholder=self.X_Minibatch,
-                y=self.y[0], y_new=self.y[1], y_placeholder=self.Y_Minibatch,
+                x=X[0], x_new=X[1], x_placeholder=self.X_Minibatch,
+                y=y[0], y_new=y[1], y_placeholder=self.Y_Minibatch,
                 weight=self.log_weights, weight_placeholder=self.Weight_Minibatch,
                 n_points_placeholder=self.n_datapoints,
                 online_placeholder=self.online_train,
@@ -393,13 +395,13 @@ class BayesNeuralNetDynModel(object):
                 seed=self.seed
             )
 
-            n_datapoints = self.X[0].shape[0] + self.X[1].shape[0]
-            n_inputs = self.X[0].shape[1]
+            n_datapoints = X[0].shape[0] + X[1].shape[0]
+            n_inputs = X[0].shape[1]
 
         else:
             generator = self.batch_generator(
-                x=self.X, x_placeholder=self.X_Minibatch,
-                y=self.y, y_placeholder=self.Y_Minibatch,
+                x=X, x_placeholder=self.X_Minibatch,
+                y=y, y_placeholder=self.Y_Minibatch,
                 weight=self.log_weights, weight_placeholder=self.Weight_Minibatch,
                 n_points_placeholder=self.n_datapoints,
                 online_placeholder=self.online_train,
@@ -407,7 +409,7 @@ class BayesNeuralNetDynModel(object):
                 seed=self.seed
             )
 
-            n_datapoints, n_inputs = self.X.shape
+            n_datapoints, n_inputs = X.shape
 
         self.sampler_kwargs.update({
             "tf_scope": self.tf_scope,
@@ -638,7 +640,7 @@ class BayesNeuralNetDynModel(object):
             x_train = X
             y_train = y
 
-        weights = []
+        self.log_weights = []
 
         for params in self.samples:
 
@@ -646,16 +648,18 @@ class BayesNeuralNetDynModel(object):
             feed_dict[self.X_Minibatch] = x_train
             feed_dict[self.Y_Minibatch] = y_train
 
-            weights.append(self.session.run(self.wKL, feed_dict=feed_dict))
+            self.log_weights.append(self.session.run(self.wKL, feed_dict=feed_dict))
 
-        return np.array(weights).T
+        self.log_weights = np.array(self.log_weights).T
+
+        return
 
     def train_normal(self, X, y, X_val=None, y_val=None, step_size=1e-3, max_iters=8000):
         start_time = time()
 
         """ Create optimizer """
 
-        self.X, self.y = X, y
+        # self.X, self.y = X, y
 
         # Reinitialize adam
         logging.info("Reinitialize dynamics Adam")
@@ -663,10 +667,10 @@ class BayesNeuralNetDynModel(object):
 
         logging.info("Starting Training")
 
-        if type(self.X) == tuple:
+        if type(X) == tuple:
             generator = self.batch_generator(
-                x=self.X[0], x_new=self.X[1], x_placeholder=self.X_Minibatch,
-                y=self.y[0], y_new=self.y[1], y_placeholder=self.Y_Minibatch,
+                x=X[0], x_new=X[1], x_placeholder=self.X_Minibatch,
+                y=y[0], y_new=y[1], y_placeholder=self.Y_Minibatch,
                 weight=self.log_weights, weight_placeholder=self.Weight_Minibatch,
                 n_points_placeholder=self.n_datapoints,
                 online_placeholder=self.online_train,
@@ -674,15 +678,15 @@ class BayesNeuralNetDynModel(object):
                 seed=self.seed
             )
 
-            x_batch = np.vstack([self.X[0], self.X[1]])
-            y_batch = np.vstack([self.y[0], self.y[1]])
+            x_batch = np.vstack([X[0], X[1]])
+            y_batch = np.vstack([y[0], y[1]])
 
-            n_train_datapoints = self.X[0].shape[0] + self.X[1].shape[0]
+            n_train_datapoints = X[0].shape[0] + X[1].shape[0]
 
         else:
             generator = self.batch_generator(
-                x=self.X, x_placeholder=self.X_Minibatch,
-                y=self.y, y_placeholder=self.Y_Minibatch,
+                x=X, x_placeholder=self.X_Minibatch,
+                y=y, y_placeholder=self.Y_Minibatch,
                 weight=self.log_weights, weight_placeholder=self.Weight_Minibatch,
                 n_points_placeholder=self.n_datapoints,
                 online_placeholder=self.online_train,
@@ -690,10 +694,10 @@ class BayesNeuralNetDynModel(object):
                 seed=self.seed
             )
 
-            x_batch = self.X
-            y_batch = self.y
+            x_batch = X
+            y_batch = y
 
-            n_train_datapoints = self.X.shape[0]
+            n_train_datapoints = X.shape[0]
 
         def log_full_training_error(iteration_index):
 
@@ -788,14 +792,14 @@ class BayesNeuralNetDynModel(object):
 
             """
 
-            if type(self.X) == tuple:
-                n_train_datapoints = self.X[0].shape[0] + self.X[1].shape[0]
-                x_batch = np.vstack([self.X[0], self.X[1]])
-                y_batch = np.vstack([self.y[0], self.y[1]])
+            if type(X) == tuple:
+                n_train_datapoints = X[0].shape[0] + X[1].shape[0]
+                x_batch = np.vstack([X[0], X[1]])
+                y_batch = np.vstack([y[0], y[1]])
             else:
-                n_train_datapoints = self.X.shape[0]
-                x_batch = self.X
-                y_batch = self.y
+                n_train_datapoints = X.shape[0]
+                x_batch = X
+                y_batch = y
 
             total_nll, total_mse = self.session.run(
                 [self.Nll, self.Mse], feed_dict={
@@ -868,7 +872,7 @@ class BayesNeuralNetDynModel(object):
         self.is_trained = True
 
         # Compute log likelihood and predict params of all models
-        self.log_weights = self._compute_weights(self.X, self.y)
+        self._compute_weights(X, y)
         self.feed_pred_params()
 
         # # Moment matching
@@ -932,14 +936,20 @@ class BayesNeuralNetDynModel(object):
 
         i = 0
 
+        self.assign_pred_params.clear()
+
         for sample in self.samples:
             net_param = sample[2:]  # remove logQ and log_lambda
 
             for param_val in net_param:
-                self.assign_pred_params[i] = self.pred_network_params[i].assign(param_val)
+                self.assign_pred_params.append(self.pred_network_params[i].assign(param_val))
+                # self.assign_pred_params[i] = self.pred_network_params[i].assign(param_val)
                 i += 1
 
-        return self.session.run(self.assign_pred_params)
+        self.session.run(list(self.assign_pred_params))[0]
+        # self.session.run(self.assign_pred_params)[0]
+
+        # gc.collect()
 
     @BaseModel._check_shapes_predict
     def predict(self, X_test, normal=False, return_individual_predictions=True, model_idx=None, *args, **kwargs):

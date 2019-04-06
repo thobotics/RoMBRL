@@ -10,7 +10,6 @@
 import tensorflow as tf
 import numpy as np
 
-from lib.me_trpo.utils import *
 from rllab.envs.base import Env
 from rllab.envs.base import Step
 
@@ -24,7 +23,6 @@ class VecSimpleEnv(object):
         self.ts = np.zeros((self.n_envs,))
         self.max_path_length = max_path_length
         self.cur_model_idx = 0
-        # self.cur_model_idx = np.random.randint(self.env.bnn_model.model.n_nets, size=(n_envs, ))
 
     def reset(self, dones=None):
         if dones is None:
@@ -35,8 +33,10 @@ class VecSimpleEnv(object):
             if done:
                 self.states[i] = self.env.reset()
                 # self.cur_model_idx[i] = np.random.randint(self.env.bnn_model.model.n_nets)
+
         self.ts[dones] = 0
         self.cur_model_idx = (self.cur_model_idx + 1) % self.env.bnn_model.model.n_nets
+
         return self.states[dones]
 
     def step(self, actions):
@@ -49,56 +49,25 @@ class VecSimpleEnv(object):
         dones[self.ts >= self.max_path_length] = True
         if np.any(dones):
             self.reset(dones)
+
         return self.states, rewards, dones, dict()
 
     def get_next_observation(self, actions):
-        sess = tf.get_default_session()
-        sam_mode = self.env.sam_mode
-
-        # next_observations, _ = self.env.bnn_model.forward_ssm(np.concatenate([self.states, actions], axis=1))
-        # next_observations, _ = self.env.bnn_model.predict(np.concatenate([self.states, actions], axis=1))
-
         next_observations, _ = self.env.bnn_model.predict(np.concatenate([self.states, actions], axis=1),
                                                           return_individual_predictions=True,
                                                           model_idx=self.cur_model_idx)
-
-        # next_possible_observations = sess.run(self.env.dynamics_outs,
-        #                                       feed_dict={self.env.dynamics_in:
-        #                                                      np.concatenate([self.states, actions],
-        #                                                                     axis=1)})
-        # next_possible_observations = np.array(next_possible_observations)
-        # if sam_mode == 'step_rand':
-        #     # Choose a random model for each batch.
-        #     indices = np.random.randint(self.env.n_models, size=self.n_envs)
-        #     next_observations = next_possible_observations[indices, range(self.n_envs)]
-        # elif sam_mode == 'eps_rand':
-        #     indices = self.cur_model_idx
-        #     next_observations = next_possible_observations[indices, range(self.n_envs)]
-        # elif sam_mode == 'model_mean_std':
-        #     std = np.std(next_possible_observations, axis=0)
-        #     next_observations = np.mean(next_possible_observations, axis=0) + np.random.normal(size=std.shape)*std
-        # elif sam_mode == 'model_mean':
-        #     next_observations = np.mean(next_possible_observations, axis=0)
-        # elif sam_mode == 'model_med':
-        #     next_observations = np.median(next_possible_observations, axis=0)
-        # elif sam_mode == 'one_model':
-        #     next_observations = next_possible_observations[0]
-        # else:
-        #     assert False, "sam mode %s is not defined." % sam_mode
 
         return next_observations
 
 
 class BayesNeuralNetEnv(Env):
+
     def __init__(self, env, inner_env, cost_np, bnn_model, sam_mode):
         self.vectorized = True
         self.env = env
         self.cost_np = cost_np
         self.is_done = getattr(inner_env, 'is_done', lambda x, y: np.asarray([False] * len(x)))
         self.bnn_model = bnn_model
-        # self.dynamics_in = dynamics_in
-        # self.dynamics_outs = dynamics_outs
-        # self.n_models = len(dynamics_outs)
         self.sam_mode = sam_mode
         super(BayesNeuralNetEnv, self).__init__()
 
@@ -113,22 +82,17 @@ class BayesNeuralNetEnv(Env):
     def reset(self):
         self._state = self.env.reset()
         observation = np.copy(self._state)
+
         return observation
 
     def step(self, action):
-        # sess = tf.get_default_session()
         action = np.clip(action, *self.action_space.bounds)
-        # index = np.random.randint(self.n_models)
-        # next_observation = sess.run(self.dynamics_outs[index],
-        #                             feed_dict={self.dynamics_in: np.concatenate([self._state, action])[None]})
-
-        # TODO: Test random vs mean variables predict
-        # next_observation, _ = self.bnn_model.forward_ssm(np.concatenate([self._state, action])[None])
         next_observation, _ = self.bnn_model.predict(np.concatenate([self._state, action])[None])
 
         reward = - self.cost_np(self._state[None], action[None], next_observation)
         done = self.is_done(self._state[None], next_observation)[0]
         self._state = np.reshape(next_observation, -1)
+
         return Step(observation=self._state, reward=reward, done=done)
 
     def render(self):

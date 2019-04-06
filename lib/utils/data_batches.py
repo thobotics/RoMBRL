@@ -146,7 +146,7 @@ def generate_batches(x, y, x_placeholder, y_placeholder, x_noise=None, x_noise_p
 
 def generate_weighted_batches(x, y, x_placeholder, y_placeholder, x_new=None, y_new=None,
                               weight_placeholder=None, weight=None,
-                              online_placeholder=None, n_points_placeholder=None, batch_size=20,
+                              continual_placeholder=None, n_points_placeholder=None, batch_size=20,
                      seed=None):
     """ Infinite generator of random minibatches for a dataset.
 
@@ -261,10 +261,10 @@ def generate_weighted_batches(x, y, x_placeholder, y_placeholder, x_new=None, y_
 
             minibatch_x = x[start:start + batch_size]
             minibatch_y = y[start:start + batch_size]
-            minibatch_w = weight
+            minibatch_w = np.zeros((batch_size, weight.shape[1]))
 
             n_datapoints = x.shape[0]
-            online_train = False
+            continual_train = False
         else:
             start0 = rng.randint(0, (len(x) - batch_size + 1))
             idx_old = slice(start0, start0 + batch_size)
@@ -280,13 +280,13 @@ def generate_weighted_batches(x, y, x_placeholder, y_placeholder, x_new=None, y_
             minibatch_w = weight[idx_old] if weight is not None else weight
 
             n_datapoints = x.shape[0] + x_new.shape[0]
-            online_train = True
+            continual_train = True
 
         feed_dict = {
             x_placeholder: minibatch_x,
             y_placeholder: minibatch_y,
             n_points_placeholder: n_datapoints,
-            online_placeholder: online_train,
+            continual_placeholder: continual_train,
         }
 
         if weight_placeholder is not None:

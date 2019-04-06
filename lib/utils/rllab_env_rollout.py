@@ -17,7 +17,7 @@ sys.path.append(os.path.abspath(os.path.join("..", "lib", "me_trpo")))
 
 import logging
 import rllab.misc.logger as rllab_logger
-from lib.me_trpo.namedtuples import Rollout_params
+from lib.utils.namedtuples import Rollout_params
 import matplotlib.pyplot as plt
 
 
@@ -256,4 +256,6 @@ class IterativeData(object):
             else:
                 fig.savefig("%s_%02d_%02d.jpg" % (data_path, iter, sample))
                 logging.debug("Saved trajectory %02d" % sample)
+
+            plt.close()
 

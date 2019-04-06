@@ -23,7 +23,8 @@ from lib.pysgmcmc.pysgmcmc.models.base_model import (
 
 from lib.utils.data_batches import generate_batches
 
-from models.bnn_dyn import get_default_net, weight_prior
+from models.nnet.architecture import get_default_net
+from models.nnet.loss_function import weight_prior
 from lib.me_trpo.utils import minimize_and_clip
 
 # TODO: Abstract this
