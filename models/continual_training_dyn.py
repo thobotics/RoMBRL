@@ -7,6 +7,7 @@
         Author  : thobotics
         Name    : Tai Hoang
 """
+import pickle
 import numpy as np
 import tensorflow as tf
 from lib.utils.running_mean_std import RunningMeanStd
@@ -19,11 +20,19 @@ class TrainingDynamics(object):
 
     def __init__(self, n_inputs, n_outputs, n_timestep,
                  session=None, scope="training_dynamics", model_type="BNN",
-                 policy=None, action_bounds=None,
-                 batch_size=50, n_nets=100, n_units=50, activation=tf.tanh,
-                 scale=1.0, a0=1.0, b0=0.1, a1=1.0, b1=0.1):
+                 policy=None, action_bounds=None, dynamic_params=None, dynamic_opt_params=None):
 
         assert model_type in ["BNN", "ME"]
+
+        n_nets = dynamic_params["n_nets"]
+        n_units = dynamic_params["hidden_layers"][0]  # TODO: Fix this as list
+        activation = eval(dynamic_params["nonlinearity"][0])  # TODO: Fix this as list
+        batch_size = dynamic_opt_params["batch_size"]
+        scale = dynamic_opt_params["scale"]
+        a0 = dynamic_opt_params["a0"]
+        b0 = dynamic_opt_params["b0"]
+        a1 = dynamic_opt_params["a1"]
+        b1 = dynamic_opt_params["b1"]
 
         # Sanitize inputs
         assert isinstance(n_inputs, int)
@@ -69,6 +78,8 @@ class TrainingDynamics(object):
         # self.scaler_xu = StandardScaler(copy=True, with_mean=False, with_std=False)
         # self.scaler_y = StandardScaler(copy=True, with_mean=False, with_std=False)
 
+        self.model_saver = []
+
         if model_type == "BNN":
             self.model = BayesNeuralNetDynModel(
                 session=self.tf_sess, tf_scope=self.tf_scope,
@@ -94,7 +105,12 @@ class TrainingDynamics(object):
                 mdecay=0.05,
             )
 
-    def _fit(self, x, u, y):
+            for i in range(self.model.n_nets):
+                model_scope = "%s/model_%d" % (self.tf_scope, i)
+                var_list = tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope=model_scope)
+                self.model_saver.append(tf.train.Saver(var_list))
+
+    def fit(self, x, u, y):
         xu = np.concatenate([x, u], axis=1)
 
         self.scaler_xu.partial_fit(xu)
@@ -127,7 +143,7 @@ class TrainingDynamics(object):
             # TODO: Reinitialize input and output rms here !
 
         if fit:
-            self._fit(x, u, y)
+            self.fit(x, u, y)
 
         return
 
@@ -147,11 +163,25 @@ class TrainingDynamics(object):
 
         return x_train, y_train, x_val, y_val
 
-    def run_bnn(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None,
-                run_normal=True, normal_step_size=2.0e-3, normal_max_iters=3000,
-                step_size=2.0e-3, mdecay=0.05, burn_in_steps=3000, n_iters=5000, sample_steps=100):
+    def run(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None, params=None):
+
+        if isinstance(self.model, BayesNeuralNetDynModel):
+            self.run_bnn(x_val, y_val, x_tr_new, y_tr_new, params["bnn"])
+        elif isinstance(self.model, EnsembleNeuralNetDynModel):
+            self.run_normal(x_val, y_val, x_tr_new, y_tr_new, params["me"])
+
+    def run_bnn(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None, bnn_params=None):
 
         assert isinstance(self.model, BayesNeuralNetDynModel)
+
+        run_normal = bnn_params["run_normal"]
+        normal_step_size = bnn_params["normal_step_size"]
+        normal_max_iters = bnn_params["normal_max_iters"]
+        step_size = bnn_params["step_size"]
+        mdecay = bnn_params["mdecay"]
+        burn_in_steps = bnn_params["burn_in_steps"]
+        max_passes = bnn_params["max_passes"]
+        sample_steps = bnn_params["sample_steps"]
 
         x_train, y_train, x_val, y_val = self._transform_data(x_val, y_val, x_tr_new, y_tr_new)
 
@@ -161,9 +191,12 @@ class TrainingDynamics(object):
 
         self.model.train(x_train, y_train, x_val, y_val,
                          step_size=step_size, mdecay=mdecay,
-                         burn_in_steps=burn_in_steps, n_iters=n_iters, sample_steps=sample_steps)
+                         burn_in_steps=burn_in_steps, n_iters=max_passes, sample_steps=sample_steps)
 
-    def run_normal(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None, step_size=2.0e-3, max_iters=3000):
+    def run_normal(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None, me_params=None):
+
+        max_iters = me_params["normal_max_iters"]
+        step_size = me_params["step_size"]
 
         x_train, y_train, x_val, y_val = self._transform_data(x_val, y_val, x_tr_new, y_tr_new)
 
@@ -204,4 +237,34 @@ class TrainingDynamics(object):
         lambda_ = np.exp(log_lambda)
 
         return Q, lambda_
+
+    def save(self, save_dir):
+        if isinstance(self.model, BayesNeuralNetDynModel):
+            pickle.dump(self.model.samples, open("%s/bnn_dynamic_samples.pkl" % save_dir, 'wb'))
+        else:
+            for i in range(len(self.model_saver)):
+                self.model_saver[i].save(self.tf_sess, "%s/me_%02d_dynamic_samples" % (save_dir, i),
+                                         write_meta_graph=False)
+
+    def restore(self, restore_dir):
+        if isinstance(self.model, BayesNeuralNetDynModel):
+            dynamic_samples = pickle.load(open("%s/bnn_dynamic_samples.pkl" % restore_dir, "rb"))
+            self.model.samples.clear()
+            for sample in dynamic_samples:
+                self.model.samples.append(sample)
+
+            assign_params = []
+            for param, val in zip(self.model.network_params, dynamic_samples[-1]):
+                assign_params.append(param.assign(val))
+            self.tf_sess.run(assign_params)
+
+            self.model.is_trained = True
+            self.model._compute_weights(self.xu, self.y)
+            self.model.feed_pred_params()
+        else:
+            for i in range(len(self.model_saver)):
+                self.model_saver[i].restore(self.tf_sess, "%s/me_%02d_dynamic_samples" % (restore_dir, i))
+
+            self.model.is_trained = True
+            self.model._compute_weights(self.xu, self.y)
 

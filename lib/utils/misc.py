@@ -8,8 +8,16 @@
         Name    : Tai Hoang
 """
 
+import json
 import logging
 import tensorflow as tf
+
+
+def load_params(param_path):
+    with open(param_path, 'r') as f:
+        params = json.load(f)
+
+    return params
 
 
 def get_logger(logger_name, folderpath, level=logging.DEBUG):

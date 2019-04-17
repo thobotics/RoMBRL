@@ -86,22 +86,13 @@ def run_main(params_dir, output_dir):
         data_generator.rollout(nn_policy)
         x_tr, u_tr, y_tr, x_va, u_va, y_va = data_generator.fetch_data(itr)
 
-        if itr == start_itr:
-            training.add_data(x_tr, u_tr, y_tr)
-        else:
-            training.fit(x_tr, u_tr, y_tr)
-
         logging.info("Current training, validate: %d, %d" % (training.y.shape[0], y_va.shape[0]))
 
         """ Optimize dynamics """
         xu_va = np.hstack((x_va, u_va))
-        xu_new = np.hstack((x_tr, u_tr))
-        y_new = y_tr
 
-        if itr == start_itr:
-            training.run(xu_va, y_va, params=all_params["dynamics_opt_params"])
-        else:
-            training.run(xu_va, y_va, xu_new, y_new, params=all_params["dynamics_opt_params"])
+        training.add_data(x_tr, u_tr, y_tr)
+        training.run(xu_va, y_va, params=all_params["dynamics_opt_params"])
 
         training.save(output_dir)
         logging.info("Saved dynamics %s" % output_dir)
@@ -114,10 +105,6 @@ def run_main(params_dir, output_dir):
 
         with open("%s/policy_log.txt" % output_dir, 'a') as f:
             f.write("iter %d %s\n" % (itr, " ".join(map(str, policy_costs))))
-
-        # Add data after training
-        if itr > start_itr:
-            training.add_data(x_tr, u_tr, y_tr, fit=False)
 
         # TODO: Output as table
 
@@ -132,7 +119,7 @@ if __name__ == '__main__':
     root_folder = os.path.dirname(os.path.abspath(__file__))
 
     params_dir = "%s/params/params-%s.json" % (root_folder, env_name)
-    output_dir = "%s/results/%s/continual_bnn_trpo" % (root_folder, env_name)
+    output_dir = "%s/results/%s/non_continual_bnn_trpo" % (root_folder, env_name)
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)

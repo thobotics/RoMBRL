@@ -112,7 +112,7 @@ def sample_trajectories(nn_policy, batch_size, exploration, render_every=None):
 
 
 class IterativeData(object):
-    def __init__(self, n_states, n_actions, n_timestep, n_training=2000, n_validate=1000):
+    def __init__(self, n_states, n_actions, n_timestep, n_training=2000, n_validate=1000, rollout_params=None):
 
         self.xu_training = np.array([], dtype=np.float32).reshape(0, n_states + n_actions)
         self.y_training = np.array([], dtype=np.float32).reshape(0, n_states)
@@ -123,27 +123,6 @@ class IterativeData(object):
         self.n_timestep = n_timestep
         self.n_training = n_training
         self.n_validate = n_validate
-
-        # TODO: Beautifier this
-        rollout_params = {
-            "training_data_size": 100000,
-            "validation_data_size": 50000,
-            "split_ratio": 0.33333333,
-            "splitting_mode": "trajectory",
-            "use_same_dataset": True,
-            "exploration": {
-                "initial_param_std": 0.0,
-                "param_noise": 3.0,
-                "action_noise": 3.0,
-                "vary_trajectory_noise": True
-            },
-            "datapath": "",
-            "is_monitored": False,
-            "monitorpath": None,
-            "max_timestep": n_timestep,
-            "render_every": None,
-            "load_rollout_data": False
-        }
 
         self.rollout_params = Rollout_params(**rollout_params)
 
@@ -160,6 +139,9 @@ class IterativeData(object):
 
         """ Do rollout """
         Os, As, Rs, info = sample_trajectories(nn_policy, sample_size, self.rollout_params.exploration)
+
+        logging.info("Rollout info")
+        logging.info(info)
 
         """ Generate data """
         x_all = []
@@ -196,6 +178,45 @@ class IterativeData(object):
         return self.xu_training[idx_tr, :n_states], self.xu_training[idx_tr, n_states:], self.y_training[idx_tr], \
                self.xu_validate[idx_val, :n_states], self.xu_validate[idx_val, n_states:], self.y_validate[idx_val]
 
+    def plot_true_traj(self, iter, n_sample, data_path=None):
+
+        n_sample = min(n_sample, self.n_training // self.n_timestep)
+        # n_sample = min(n_sample, self.n_validate // self.n_timestep)
+        n_states = self.n_states
+
+        idx_tr = slice(self.n_training * iter, self.n_training * (iter + 1))
+        # idx_tr = slice(self.n_validate * iter, self.n_validate * (iter + 1))
+
+        minx = max(np.min(self.xu_training[:, 0]) - 0.5, -10.0)
+        maxx = min(np.max(self.xu_training[:, 0]) + 0.5, 10.0)
+        miny = max(np.min(self.xu_training[:, 1]) - 0.5, -10.0)
+        maxy = min(np.max(self.xu_training[:, 1]) + 0.5, 10.0)
+
+        # Setup state for plotting
+        for sample in range(n_sample):
+            idx_traj = slice(self.n_timestep * sample, self.n_timestep * (sample + 1))
+
+            plt.rcParams['figure.figsize'] = (8, 3)
+            fig = plt.figure()
+
+            plt.xlim([minx, maxx])
+            plt.ylim([miny, maxy])
+
+            trajectories = self.xu_training[idx_tr, :n_states][idx_traj]
+
+            plt.quiver(trajectories[:, 0], trajectories[:, 1],
+                       np.cos(trajectories[:, 2]), np.sin(trajectories[:, 2]), width=0.002,
+                       color="black", alpha=1.0)
+
+            if data_path is None:
+                plt.grid()
+                plt.show()
+            else:
+                fig.savefig("%s_%02d_%02d.jpg" % (data_path, iter, sample))
+                logging.debug("Saved trajectory %02d" % sample)
+
+            plt.close()
+
     def plot_traj(self, bnn_model, iter, n_sample, data_path=None):
 
         n_sample = min(n_sample, self.n_training // self.n_timestep)
@@ -207,10 +228,15 @@ class IterativeData(object):
 
         color = ['green', 'k', 'yellow', 'cyan', "blue"]
 
+        minx = max(np.min(self.xu_training[:, 0]) - 0.5, -10.0)
+        maxx = min(np.max(self.xu_training[:, 0]) + 0.5, 10.0)
+        miny = max(np.min(self.xu_training[:, 1]) - 0.5, -10.0)
+        maxy = min(np.max(self.xu_training[:, 1]) + 0.5, 10.0)
+
         # Setup state for plotting
         for sample in range(n_sample):
-            idx_traj = slice(self.n_timestep * sample, self.n_training * (sample + 1))
-            # idx_traj = slice(self.n_timestep * sample, self.n_validate * (sample + 1))
+            idx_traj = slice(self.n_timestep * sample, self.n_timestep * (sample + 1))
+            # idx_traj = slice(self.n_timestep * sample, self.n_timestep * (sample + 1))
 
             start_state = self.xu_training[idx_tr, :n_states][idx_traj][0]
 
@@ -226,14 +252,8 @@ class IterativeData(object):
             plt.rcParams['figure.figsize'] = (8, 3)
             fig = plt.figure()
 
-            # plt.xlim([-2.0, 10.0])
-            # plt.ylim([-1.5, 1.5])
-
-            plt.xlim([-2.0, 2.0])
-            plt.ylim([-1.5, 1.5])
-
-            # plt.xlim([-0.5, 2.0])
-            # plt.ylim([-0.5, 0.5])
+            plt.xlim([minx, maxx])
+            plt.ylim([miny, maxy])
 
             for idx in range(bnn_model.model.n_nets):
 

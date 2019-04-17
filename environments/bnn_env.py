@@ -35,7 +35,8 @@ class VecSimpleEnv(object):
                 # self.cur_model_idx[i] = np.random.randint(self.env.bnn_model.model.n_nets)
 
         self.ts[dones] = 0
-        self.cur_model_idx = (self.cur_model_idx + 1) % self.env.bnn_model.model.n_nets
+        # self.cur_model_idx = (self.cur_model_idx + 1) % self.env.bnn_model.model.n_nets
+        self.cur_model_idx = np.random.randint(self.env.bnn_model.model.n_nets)
 
         return self.states[dones]
 

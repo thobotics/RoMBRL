@@ -3,7 +3,7 @@ import tensorflow as tf
 import os.path
 import rllab.misc.logger as rllab_logger
 from rllab.envs.normalized_env import normalize
-from environments.mujoco_envs import  *
+from environments.mujoco_envs import *
 from sandbox.rocky.tf.envs.base import TfEnv
 
 ####################
