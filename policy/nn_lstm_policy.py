@@ -22,7 +22,9 @@ from environments.bnn_env import BayesNeuralNetEnv
 from rllab_algos.algos.trpo import TRPO
 from rllab.baselines.linear_feature_baseline import LinearFeatureBaseline
 from lib.utils.env_helpers import evaluate_fixed_init_trajectories, evaluate_fixed_init_trajectories_2
-from sandbox.rocky.tf.policies.gaussian_mlp_policy import GaussianMLPPolicy
+from .gaussian_lstm_policy import GaussianLSTMPolicy
+import sandbox.rocky.tf.core.layers as L
+from sandbox.rocky.tf.optimizers.conjugate_gradient_optimizer import ConjugateGradientOptimizer, FiniteDifferenceHvp
 
 """
 Extend from project ME-TRPO
@@ -56,11 +58,14 @@ class NNPolicy(object):
         self.min_validation_cost = np.inf
         self.non_increase_counter = 0
 
-        self.training_policy, self.policy_model = self._build_policy_from_rllab(env=env, n_actions=self.n_actions)
+        # self.training_policy, self.policy_model = self._build_policy_from_rllab(env=env, n_actions=self.n_actions)
+        self.training_policy, self.policy_model = self._build_lstm_policy_from_rllab(env=env, n_actions=self.n_actions)
 
         self.policy_in, self.policy_out, self.stochastic = self._initialize_policy(self.policy_model, self.n_states)
         self.algo_policy, self.cost_np_vec = self._init_bnn_trpo(dyn_model, self.training_policy, self.n_timestep)
-        self.reset_op = tf.assign(self.training_policy._l_std_param.param, np.log(1.0) * np.ones(self.n_actions))
+
+        # self.reset_op = tf.assign(self.training_policy._l_std_param.param, np.log(1.0) * np.ones(self.n_actions))
+        self.reset_op = tf.assign(self.training_policy.l_log_std.param, np.log(1.0) * np.ones(self.n_actions))
 
         # Create validation data
         self.policy_validation_init, self.policy_validation_reset_init = \
@@ -100,7 +105,7 @@ class NNPolicy(object):
 
         return policy_validation_init, policy_validation_reset_init
 
-    def _build_policy_from_rllab(self, env, n_actions):
+    def _build_lstm_policy_from_rllab(self, env, n_actions):
         """ Return both rllab policy and policy model function. """
 
         sess = self.tf_sess
@@ -108,41 +113,66 @@ class NNPolicy(object):
 
         # Initialize training_policy to copy from policy
 
-        training_policy = GaussianMLPPolicy(
+        training_policy = GaussianLSTMPolicy(
             name=scope_name,
             env_spec=env.spec,
-            hidden_sizes=self.policy_params["hidden_layers"],
+            # lstm_layer_cls=L.TfBasicLSTMLayer,
+            lstm_layer_cls=L.LSTMLayer,
+            hidden_dim=self.policy_params["hidden_layers"][0],
+            state_include_action=True,
+            # gru_layer_cls=L.GRULayer,
             init_std=self.policy_opt_params["trpo"]["init_std"],
             output_nonlinearity=eval(self.policy_params["output_nonlinearity"])
         )
+
         training_policy_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='training_policy')
         sess.run([tf.variables_initializer(training_policy_vars)])
 
-        def policy_model(x, stochastic=1.0, collect_summary=False):
-            dist_info_sym = training_policy.dist_info_sym(x, dict())
+        # Compute policy model function using the same weights.
 
-            mean_var = dist_info_sym["mean"]
-            log_std_var = dist_info_sym["log_std"]
+        def policy_model(x, stochastic, collect_summary=False):
 
-            mean_var += stochastic * tf.random_normal(shape=(tf.shape(x)[0], n_actions)) * tf.exp(log_std_var)
+            means, log_stds, hidden_vec, cell_vec = training_policy.custom_policy(x)[1]
 
-            return mean_var
+            rnd = tf.random_normal(shape=(tf.shape(x)[0], n_actions))
+            actions = stochastic * rnd * tf.exp(log_stds) + means
+
+            return actions, hidden_vec, cell_vec
 
         return training_policy, policy_model
 
     def session_policy_out(self, observation, stochastic=0.0):
 
-        action = self.tf_sess.run(self.policy_out, feed_dict={self.policy_in: observation, self.stochastic: stochastic})
+        if self.training_policy.state_include_action:
+            assert self.training_policy.prev_actions is not None
+            all_input = np.concatenate([
+                observation,
+                self.training_policy.prev_actions
+            ], axis=-1)
+        else:
+            all_input = observation
 
-        return action
+        prev_state = self.training_policy.mean_network.step_prev_state_layer.input_var
+
+        actions, hidden_vec, cell_vec = self.tf_sess.run(self.policy_out,
+             feed_dict={self.policy_in: all_input, self.stochastic: stochastic,
+                        prev_state: np.hstack([self.training_policy.prev_hiddens,
+                                               self.training_policy.prev_cells])})
+
+        self.training_policy.prev_actions = self.training_policy.action_space.flatten_n(actions)
+        self.training_policy.prev_hiddens = hidden_vec
+        self.training_policy.prev_cells = cell_vec
+
+        return actions
 
     def _initialize_policy(self, policy_model, n_states):
 
         # Initial tf variables
         policy_scope = self.scope_name
-        policy_in = tf.placeholder(tf.float32, shape=(None, n_states), name='policy_in')
+        policy_in = tf.placeholder(tf.float32, shape=(None, n_states + self.n_actions), name='policy_in')
         stochastic = tf.placeholder(tf.float32, shape=(None), name='stochastic')
         policy_out = policy_model(policy_in, stochastic=stochastic)
+
         tf.add_to_collection("policy_in", policy_in)
         tf.add_to_collection("stochastic", stochastic)
         tf.add_to_collection("policy_out", policy_out)
@@ -188,6 +218,7 @@ class NNPolicy(object):
             max_path_length=time_step,
             discount=self.policy_opt_params["trpo"]["discount"],
             step_size=self.policy_opt_params["trpo"]["step_size"],
+            optimizer=ConjugateGradientOptimizer(hvp_approach=FiniteDifferenceHvp(base_eps=1e-5))
             # sampler_args=sampler_args,  # params for VectorizedSampler
         )
 
@@ -203,11 +234,13 @@ class NNPolicy(object):
         cost_np = inner_env.cost_np
         gamma = 1.0
         _policy_costs = []
+        dones = np.asarray([True] * len(policy_training_init))
 
         for i in range(bnn_model.model.n_nets):
 
             x = policy_training_init
             _policy_cost = 0
+            self.training_policy.reset(dones)
 
             for t in range(time_step):
                 u = np.clip(self.session_policy_out(x), *self.env.action_space.bounds)
@@ -230,8 +263,7 @@ class NNPolicy(object):
         if len(observation.shape) == 1:
             observation = observation[np.newaxis]
 
-        # action = self.tf_sess.run(self.policy_out,
-        #                           feed_dict={self.policy_in: observation})
+        # action = self.tf_sess.run(self.policy_out, feed_dict={self.policy_in: observation})
         # action = self.session_policy_out(observation, stochastic=1.0)
 
         action = self.session_policy_out(observation, stochastic=0.0)
@@ -256,7 +288,7 @@ class NNPolicy(object):
             self.min_validation_cost = np.inf
 
         logging.debug("Before reset policy std %s " %
-                      np.array2string(np.exp(self.training_policy._l_std_param.param.eval()),
+                      np.array2string(np.exp(self.training_policy.l_log_std.param.eval()),
                                       formatter={'float_kind': '{0:.5f}'.format}))
         self.tf_sess.run([self.reset_op])
 
@@ -287,6 +319,8 @@ class NNPolicy(object):
                                                                            self.n_timestep,
                                                                            self.policy_validation_init)
                 else:
+                    dones = np.asarray([True] * len(reset_val))
+                    self.training_policy.reset(dones)
                     estimate_validation_cost = evaluate_fixed_init_trajectories_2(
                         real_env,
                         self.session_policy_out,
@@ -300,6 +334,8 @@ class NNPolicy(object):
                 validation_cost = mean_validation_cost
 
                 np.random.shuffle(reset_idx)
+                dones = np.asarray([True] * len(reset_val))
+                self.training_policy.reset(dones)
                 real_validation_cost = evaluate_fixed_init_trajectories_2(
                     real_env,
                     self.session_policy_out,
@@ -342,6 +378,8 @@ class NNPolicy(object):
         else:
             self.non_increase_counter += 1
 
+        dones = np.asarray([True] * len(self.policy_validation_reset_init))
+        self.training_policy.reset(dones)
         real_final_cost = evaluate_fixed_init_trajectories_2(
             real_env,
             self.session_policy_out,

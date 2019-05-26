@@ -4,6 +4,7 @@ import os.path
 import rllab.misc.logger as rllab_logger
 from rllab.envs.normalized_env import normalize
 from environments.mujoco_envs import *
+from environments.diffdrive.diff_drive_env import DiffDriveEnv
 from sandbox.rocky.tf.envs.base import TfEnv
 
 ####################
@@ -19,6 +20,8 @@ def get_env(env_name):
         return TfEnv(normalize(HalfCheetahEnv()))
     elif env_name == 'hopper':
         return TfEnv(normalize(HopperEnv()))
+    elif env_name == 'walker':
+        return TfEnv(normalize(Walker2DEnv()))
     elif env_name == 'ant':
         return TfEnv(normalize(AntEnv()))
     # elif env_name == 'humanoidstandup':
@@ -29,6 +32,12 @@ def get_env(env_name):
         return TfEnv(normalize(HumanoidEnv()))
     # elif env_name == 'simple_humanoid':
     #     return TfEnv(normalize(SimpleHumanoidEnv()))
+    elif env_name == 'diffdrive':
+        return TfEnv(normalize(DiffDriveEnv()))
+    elif env_name == 'backward_snake':
+        return TfEnv(normalize(BackwardSnakeEnv()))
+    elif env_name == 'backward_ant':
+        return TfEnv(normalize(BackwardAntEnv()))
     else:
         assert False, "Define the env from env_name."
 
@@ -470,6 +479,36 @@ def step_batch(envs, actions):
     next_steps = [env.step(action) for (env, action) in zip(envs, actions)]
     next_obs, rs, ds, infos = list(zip(*next_steps))
     return np.array(next_obs), np.array(rs), np.array(ds), infos
+
+def evaluate_fixed_init_trajectories_2(env,
+                                     session_policy_out,
+                                     reset_initial_states,
+                                     cost_np_vec, sess,
+                                     max_timestep=100,
+                                     gamma=1.0):
+    import pickle
+    n_envs = len(reset_initial_states)
+    envs = [pickle.loads(pickle.dumps(env)) for _ in range(n_envs)]
+    observations = reset_batch(envs, reset_initial_states)
+    dones = [False for _ in range(n_envs)]
+    cost = 0.0
+    reward = 0.0
+    for t in range(max_timestep):
+        # actions = sess.run(policy_out, feed_dict={policy_in: observations})
+        actions = session_policy_out(observations)
+        # clipping
+        actions = np.clip(actions, *env.action_space.bounds)
+        next_observations, _rewards, _dones, _ = step_batch(envs, actions)
+        dones = np.logical_or(dones, _dones)
+        # Update rewards and costs
+        rewards = (1.0 - dones) * _rewards * gamma**t
+        costs = (1.0-dones)*cost_np_vec(observations, actions, next_observations) * gamma**t
+        # Update observation
+        observations = next_observations
+        cost += np.mean(costs)
+        reward += np.mean(rewards)
+    assert cost + reward < 1e-2
+    return cost
 
 # Given a batch of initial states and a policy, do deterministic rollout on real env.
 # Don't render. Add cost function evaluation.

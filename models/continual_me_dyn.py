@@ -110,6 +110,7 @@ class EnsembleNeuralNetDynModel(object):
         self.log_Q = []
         self.log_lambda = []
         self.f_output = []
+        self.pred_output = []
         self.network_params = []
 
         # Normalize input
@@ -143,7 +144,12 @@ class EnsembleNeuralNetDynModel(object):
                     net_output = zero_mean_unit_var_unnormalization(net_output,
                                                 self.norm_output.mean, self.norm_output.std)
 
-                self.f_output.append(self.X_Minibatch[:, :n_outputs] + net_output)
+                f_output = self.X_Minibatch[:, :n_outputs] + net_output
+                pred_output = f_output + \
+                              tf.random_normal(shape=(tf.shape(f_output))) * tf.exp(self.log_Q[i])
+                self.f_output.append(f_output)
+                self.pred_output.append(f_output)
+                # self.pred_output.append(pred_output)
 
                 self.network_params.append(tf.trainable_variables(model_scope))
 
@@ -233,22 +239,35 @@ class EnsembleNeuralNetDynModel(object):
 
         """
 
-        total_nll, total_mse = self.session.run(
-            [self.Nll, self.Mse], feed_dict={
-                self.X_Minibatch: x_batch,
-                self.Y_Minibatch: y_batch,
-                self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
-                self.n_datapoints: x_batch.shape[0],
-            }
-        )
-        total_nll_val, total_mse_val = self.session.run(
-            [self.Nll, self.Mse], feed_dict={
-                self.X_Minibatch: X_val,
-                self.Y_Minibatch: y_val,
-                self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
-                self.n_datapoints: X_val.shape[0],
-            }
-        )
+        log_batch = 3000
+        total_nll, total_mse = 0., 0.
+        total_nll_val, total_mse_val = 0., 0.
+
+        for i in range(len(x_batch) // log_batch):
+            nll, mse = self.session.run(
+                [self.Nll, self.Mse], feed_dict={
+                    self.X_Minibatch: x_batch[:log_batch * (i + 1)],
+                    self.Y_Minibatch: y_batch[:log_batch * (i + 1)],
+                    self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
+                    self.n_datapoints: x_batch.shape[0],
+                }
+            )
+
+            total_nll += nll
+            total_mse += mse
+
+        for i in range(len(x_batch) // log_batch):
+            nll_val, mse_val = self.session.run(
+                [self.Nll, self.Mse], feed_dict={
+                    self.X_Minibatch: X_val[:log_batch * (i + 1)],
+                    self.Y_Minibatch: y_val[:log_batch * (i + 1)],
+                    self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
+                    self.n_datapoints: X_val.shape[0],
+                }
+            )
+
+            total_nll_val += nll_val
+            total_mse_val += mse_val
 
         seconds_elapsed = time() - start_time
 
@@ -354,4 +373,5 @@ class EnsembleNeuralNetDynModel(object):
                 index = np.random.randint(self.n_nets)
             else:
                 index = model_idx
-            return self.session.run(self.f_output[index], feed_dict={self.X_Minibatch: X_test}), None
+
+            return self.session.run(self.pred_output[index], feed_dict={self.X_Minibatch: X_test}), None

@@ -49,14 +49,12 @@ class BayesNeuralNetDynModel(object):
         assert isinstance(n_inputs, int)
         assert isinstance(n_outputs, int)
         assert isinstance(n_nets, int)
-        assert isinstance(n_units, int)
         assert isinstance(batch_size, int)
         assert isinstance(dtype, tf.DType)
 
         assert n_inputs > 0
         assert n_outputs > 0
         assert n_nets > 0
-        assert n_units > 0
         assert batch_size > 0
 
         assert callable(get_net)
@@ -244,7 +242,9 @@ class BayesNeuralNetDynModel(object):
                     net_output = zero_mean_unit_var_unnormalization(net_output,
                                                                     self.norm_output.mean, self.norm_output.std)
 
-                self.pred_output.append(self.X_Minibatch[:, :n_outputs] + net_output)
+                pred_output = self.X_Minibatch[:, :n_outputs] + net_output
+                # pred_output += tf.random_normal(shape=(tf.shape(pred_output))) * tf.exp(self.log_Q)
+                self.pred_output.append(pred_output)
 
         self.pred_network_params = tf.global_variables("predict_dynamics")
         self.assign_pred_params = deque(maxlen=len(self.pred_network_params))
@@ -394,22 +394,35 @@ class BayesNeuralNetDynModel(object):
 
         """
 
-        total_nll, total_mse = self.session.run(
-            [self.Nll, self.Mse], feed_dict={
-                self.X_Minibatch: x_batch,
-                self.Y_Minibatch: y_batch,
-                self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
-                self.n_datapoints: x_batch.shape[0],
-            }
-        )
-        total_nll_val, total_mse_val = self.session.run(
-            [self.Nll, self.Mse], feed_dict={
-                self.X_Minibatch: X_val,
-                self.Y_Minibatch: y_val,
-                self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
-                self.n_datapoints: X_val.shape[0],
-            }
-        )
+        log_batch = 3000
+        total_nll, total_mse = 0., 0.
+        total_nll_val, total_mse_val = 0., 0.
+
+        for i in range(len(x_batch) // log_batch + 1):
+            nll, mse = self.session.run(
+                [self.Nll, self.Mse], feed_dict={
+                    self.X_Minibatch: x_batch[:log_batch*(i+1)],
+                    self.Y_Minibatch: y_batch[:log_batch*(i+1)],
+                    self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
+                    self.n_datapoints: x_batch.shape[0],
+                }
+            )
+
+            total_nll += nll
+            total_mse += mse
+
+        for i in range(len(x_batch) // log_batch + 1):
+            nll_val, mse_val = self.session.run(
+                [self.Nll, self.Mse], feed_dict={
+                    self.X_Minibatch: X_val[:log_batch*(i+1)],
+                    self.Y_Minibatch: y_val[:log_batch*(i+1)],
+                    self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
+                    self.n_datapoints: X_val.shape[0],
+                }
+            )
+
+            total_nll_val += nll_val
+            total_mse_val += mse_val
 
         seconds_elapsed = time() - start_time
 

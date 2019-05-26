@@ -20,6 +20,11 @@ def load_params(param_path):
     return params
 
 
+def dump_params(data, out_dir):
+    with open('%s/params.json' % out_dir, 'w') as outfile:
+        json.dump(data, outfile)
+
+
 def get_logger(logger_name, folderpath, level=logging.DEBUG):
     logger = logging.getLogger(logger_name)
     logger.setLevel(level)

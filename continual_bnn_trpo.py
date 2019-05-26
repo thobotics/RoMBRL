@@ -13,23 +13,25 @@ import numpy as np
 import pickle
 import sys
 import os
+import argparse
 
 sys.path.append(os.path.abspath(os.path.join("lib", "pysgmcmc/")))
 
 from lib.utils.misc import *
-from policy.nn_policy import NNPolicy
 from lib.utils.rllab_env_rollout import IterativeData
 from lib.utils.env_helpers import get_env
 from models.continual_training_dyn import TrainingDynamics
+# import logging
 
 logger_lvl = logging.getLogger()
 logger_lvl.setLevel(logging.DEBUG)
 
 
-def run_main(params_dir, output_dir):
+def run_main(params_dir, output_dir, policy_type):
 
     """ Init data """
     all_params = load_params(params_dir)
+    dump_params(all_params, output_dir)
 
     env = get_env(all_params["env"])
     n_states = env.observation_space.shape[0]
@@ -58,12 +60,34 @@ def run_main(params_dir, output_dir):
                                 dynamic_params=all_params["dynamics_params"],
                                 dynamic_opt_params=all_params["dynamics_opt_params"])
 
+    start_itr = 0
     if all_params["restore_dir"]:
         logging.info("Restoring dynamics %s" % all_params["restore_dir"])
         xu_training, y_training, xu_validate, y_validate = pickle.load(open("%s/rollout.pkl"
                                                                             % all_params["restore_dir"], "rb"))
+
+        if "init_only" in all_params and all_params["init_only"]:
+            init_lfd_traj = all_params["init_lfd_traj"]
+            xu_training = xu_training[-init_lfd_traj * n_timestep:]
+            y_training = y_training[-init_lfd_traj * n_timestep:]
+            # xu_validate = xu_validate[:n_validate]
+            # y_validate = y_validate[:n_validate]
+
+        start_itr = len(xu_training) // n_training
         training.add_data(xu_training[:, :n_states], xu_training[:, n_states:], y_training)
-        training.restore(all_params["restore_dir"])
+
+        if "restore_dynamics" in all_params and all_params["restore_dynamics"]:
+            training.restore(all_params["restore_dir"])
+        else:
+            training.run(xu_validate, y_validate, params=all_params["dynamics_opt_params"])
+
+        data_generator.set_offline(xu_training, y_training, xu_validate, y_validate)
+
+    """ Load policy """
+    if policy_type == "lstm":
+        from policy.nn_lstm_policy import NNPolicy
+    else:
+        from policy.nn_policy import NNPolicy
 
     """ Load policy """
     nn_policy = NNPolicy(sess, env, training, n_timestep, n_states, n_actions,
@@ -72,19 +96,29 @@ def run_main(params_dir, output_dir):
                          policy_opt_params=all_params["policy_opt_params"])
 
     if all_params["restore_dir"]:
-        nn_policy.policy_saver.restore(sess, os.path.join(all_params["restore_dir"], 'policy.ckpt'))
+        if not all_params["init_only"] and all_params["restore_policy"]:
+            nn_policy.policy_saver.restore(sess, os.path.join(all_params["restore_dir"], 'policy.ckpt'))
+        else:
+            nn_policy.optimize_policy()
 
     """ RL step """
 
-    start_itr, end_iter = 0, all_params["sweep_iters"]
+    start_itr, end_iter = start_itr, all_params["sweep_iters"]
 
     for itr in range(start_itr, end_iter):
 
         logging.info("Iteration %d" % itr)
 
         """ Rollout and add data """
+        # if ("init_only" in all_params and all_params["init_only"] and itr > start_itr) or not all_params["init_only"]:
+        #     data_generator.rollout(nn_policy)
         data_generator.rollout(nn_policy)
         x_tr, u_tr, y_tr, x_va, u_va, y_va = data_generator.fetch_data(itr)
+
+        # Dump data
+        pickle.dump((data_generator.xu_training, data_generator.y_training,
+                     data_generator.xu_validate, data_generator.y_validate),
+                    open("%s/rollout.pkl" % output_dir, 'wb'))
 
         if itr == start_itr:
             training.add_data(x_tr, u_tr, y_tr)
@@ -101,7 +135,12 @@ def run_main(params_dir, output_dir):
         if itr == start_itr:
             training.run(xu_va, y_va, params=all_params["dynamics_opt_params"])
         else:
-            training.run(xu_va, y_va, xu_new, y_new, params=all_params["dynamics_opt_params"])
+            if "init_only" in all_params and all_params["init_only"]:
+                xu_all = np.vstack((xu_new, xu_training))
+                y_all = np.vstack((y_new, y_training))
+            else:
+                xu_all, y_all = xu_new, y_new
+            training.run(xu_va, y_va, xu_all, y_all, params=all_params["dynamics_opt_params"])
 
         training.save(output_dir)
         logging.info("Saved dynamics %s" % output_dir)
@@ -109,11 +148,22 @@ def run_main(params_dir, output_dir):
         data_generator.plot_traj(training, iter=itr, n_sample=10,
                                  data_path=os.path.join(output_dir, 'bnn_trpo'))
 
+        training._log_covariances()
+
         """ Optimize Policy """
-        policy_costs = nn_policy.optimize_policy()
+        est_costs, real_costs = nn_policy.optimize_policy()
 
         with open("%s/policy_log.txt" % output_dir, 'a') as f:
-            f.write("iter %d %s\n" % (itr, " ".join(map(str, policy_costs))))
+            f.write("iter %d\n"
+                    "\t val [%s]\n"
+                    "\t real [%s]\n"
+                    "\t final real %.3f\n" % (itr,
+                                              " ".join(map(str, est_costs)),
+                                              " ".join(map(str, real_costs[:-1])),
+                                              real_costs[-1]))
+
+        data_generator.plot_fictitious_traj(training, nn_policy,
+                                            data_path=os.path.join(output_dir, 'fict_samp_i%02d' % itr))
 
         # Add data after training
         if itr > start_itr:
@@ -126,16 +176,56 @@ def run_main(params_dir, output_dir):
                                  data_path=os.path.join(output_dir, 'all_bnn_trpo'))
 
 
-if __name__ == '__main__':
+def main(argv):
+    parser = argparse.ArgumentParser()
 
-    env_name = "snake"
-    root_folder = os.path.dirname(os.path.abspath(__file__))
+    parser.add_argument('-i', '--indir',
+                        required=True,
+                        help="Params dir")
 
-    params_dir = "%s/params/params-%s.json" % (root_folder, env_name)
-    output_dir = "%s/results/%s/continual_bnn_trpo" % (root_folder, env_name)
+    parser.add_argument('-o', '--outdir',
+                        required=True,
+                        help="Output dir")
+
+    parser.add_argument('-l', '--logdir',
+                        required=True,
+                        help="Log dir")
+
+    parser.add_argument('-e', '--env',
+                        required=True,
+                        help="Environment")
+
+    parser.add_argument('-g', '--gpu',
+                        required=True,
+                        help="Environment")
+
+    parser.add_argument('-p', '--policy',
+                        required=True,
+                        help="Environment")
+
+    args = parser.parse_args()
+
+    params_dir = args.indir
+    log_dir = args.logdir
+    output_dir = args.outdir
+    env_name = args.env
+    gpu = args.gpu
+    policy = args.policy
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = gpu
+
+    logging.basicConfig(filename=log_dir,
+                        filemode='w',
+                        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                        datefmt='%H:%M:%S',
+                        level=logging.DEBUG)
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
 
-    run_main(params_dir, output_dir)
+    run_main(params_dir, output_dir, policy)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
 

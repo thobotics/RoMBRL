@@ -7,6 +7,7 @@
         Author  : thobotics
         Name    : Tai Hoang
 """
+import logging
 import pickle
 import numpy as np
 import tensorflow as tf
@@ -25,8 +26,8 @@ class TrainingDynamics(object):
         assert model_type in ["BNN", "ME"]
 
         n_nets = dynamic_params["n_nets"]
-        n_units = dynamic_params["hidden_layers"][0]  # TODO: Fix this as list
-        activation = eval(dynamic_params["nonlinearity"][0])  # TODO: Fix this as list
+        n_units = dynamic_params["hidden_layers"]
+        activation = dynamic_params["nonlinearity"]
         batch_size = dynamic_opt_params["batch_size"]
         scale = dynamic_opt_params["scale"]
         a0 = dynamic_opt_params["a0"]
@@ -40,14 +41,14 @@ class TrainingDynamics(object):
         assert isinstance(n_timestep, int)
         assert isinstance(batch_size, int)
         assert isinstance(n_nets, int)
-        assert isinstance(n_units, int)
+        assert isinstance(n_units, list)
+        assert isinstance(activation, list)
 
         assert n_inputs > 0
         assert n_outputs > 0
         assert n_timestep > 0
         assert batch_size > 0
         assert n_nets > 0
-        assert n_units > 0
 
         self.n_inputs = n_inputs
         self.n_outputs = n_outputs
@@ -79,6 +80,7 @@ class TrainingDynamics(object):
         # self.scaler_y = StandardScaler(copy=True, with_mean=False, with_std=False)
 
         self.model_saver = []
+        self.has_data = False
 
         if model_type == "BNN":
             self.model = BayesNeuralNetDynModel(
@@ -144,6 +146,8 @@ class TrainingDynamics(object):
 
         if fit:
             self.fit(x, u, y)
+
+        self.has_data = True
 
         return
 
@@ -212,6 +216,7 @@ class TrainingDynamics(object):
 
             for sample in self.model.samples:
                 out = self.model.compute_network_output(params=sample, input_data=x_test)
+                out = np.clip(out, -100., 100.)
                 f_out.append(self.scaler_y.inverse_transform(out))
                 # f_out.append(out)
 
@@ -222,21 +227,37 @@ class TrainingDynamics(object):
 
         else:
             mu_test, _ = self.model.predict(x_test, **kwargs)
+            mu_test = np.clip(mu_test, -100., 100.)
             mu_test = self.scaler_y.inverse_transform(mu_test)
 
         return mu_test, var_test
 
-    def _get_covariances(self):
+    def _log_covariances(self):
         """ Fetch covariances from tensorgraph
         """
 
-        log_Q = self.model.get_variable("log_Q").reshape(-1)
-        log_lambda = self.model.get_variable("log_lambda")
+        if isinstance(self.model, BayesNeuralNetDynModel):
+            log_Q = self.model.get_variable("log_Q").reshape(-1)
+            log_lambda = self.model.get_variable("log_lambda")
 
-        Q = np.diag(np.exp(log_Q))
-        lambda_ = np.exp(log_lambda)
+            Q = np.exp(log_Q)
+            lambda_ = np.exp(log_lambda)
 
-        return Q, lambda_
+            logging.debug("Q:\t%s" % np.array2string(Q))
+            logging.debug("Lambda:\t%s" % np.array2string(lambda_))
+        else:
+            for model_idx in range(self.model.n_nets):
+
+                logging.debug("Model %d" % model_idx)
+
+                log_Q = self.model.get_variable("log_Q", model_idx).reshape(-1)
+                log_lambda = self.model.get_variable("log_lambda", model_idx)
+
+                Q = np.exp(log_Q)
+                lambda_ = np.exp(log_lambda)
+
+                logging.debug("Q:\t%s" % np.array2string(Q))
+                logging.debug("Lambda:\t%s" % np.array2string(lambda_))
 
     def save(self, save_dir):
         if isinstance(self.model, BayesNeuralNetDynModel):

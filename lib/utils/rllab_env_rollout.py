@@ -46,6 +46,7 @@ def sample_trajectories(nn_policy, batch_size, exploration, render_every=None):
         observation = env.reset()
         o.append(observation)
         episode_reward = 0.0
+        nn_policy.training_policy.reset()
 
         for t in range(max_timestep):
             # Perturb policy.
@@ -133,12 +134,12 @@ class IterativeData(object):
         self.xu_validate = xu_validate
         self.y_validate = y_validate
 
-    def rollout(self, nn_policy):
+    def rollout(self, nn_policy, render_every=None):
 
         sample_size = self.n_training + self.n_validate
 
         """ Do rollout """
-        Os, As, Rs, info = sample_trajectories(nn_policy, sample_size, self.rollout_params.exploration)
+        Os, As, Rs, info = sample_trajectories(nn_policy, sample_size, self.rollout_params.exploration, render_every=render_every)
 
         logging.info("Rollout info")
         logging.info(info)
@@ -177,6 +178,65 @@ class IterativeData(object):
 
         return self.xu_training[idx_tr, :n_states], self.xu_training[idx_tr, n_states:], self.y_training[idx_tr], \
                self.xu_validate[idx_val, :n_states], self.xu_validate[idx_val, n_states:], self.y_validate[idx_val]
+
+    def plot_fictitious_traj(self, training, nn_policy, data_path=None):
+
+        """ Generate Trajectories """
+
+        inits = nn_policy.policy_validation_init[:10]
+        trajectories = np.zeros((training.model.n_nets, len(inits), self.n_timestep, self.n_states))
+
+        for i in range(training.model.n_nets):
+
+            dones = np.asarray([True] * len(inits))
+
+            x = inits
+            _policy_cost = 0
+            nn_policy.training_policy.reset(dones)
+
+            for t in range(self.n_timestep):
+                u = np.clip(nn_policy.session_policy_out(x, stochastic=1.0), *nn_policy.env.action_space.bounds)
+
+                x_next, _ = training.predict(np.concatenate([x, u], axis=1),
+                                             return_individual_predictions=True,
+                                             model_idx=i)
+                trajectories[i, :, t, :] = x_next
+
+                # Move forward 1 step.
+                x = x_next
+
+        """ Plot trajectories """
+
+        minx = max(np.min(trajectories[:, :, :, 0]) - 0.5, -10.0)
+        maxx = min(np.max(trajectories[:, :, :, 0]) + 0.5, 10.0)
+        miny = max(np.min(trajectories[:, :, :, 1]) - 0.5, -10.0)
+        maxy = min(np.max(trajectories[:, :, :, 1]) + 0.5, 10.0)
+
+        plt.rcParams['figure.figsize'] = (8, 3)
+
+        for i in range(trajectories.shape[0]):
+            fig = plt.figure()
+
+            plt.xlim([minx, maxx])
+            plt.ylim([miny, maxy])
+
+            color = ['green', 'k', 'yellow', 'cyan', "blue"]
+            color_idx = 0
+
+            for n in range(trajectories.shape[1]):
+                plt.quiver(trajectories[i, n, :, 0], trajectories[i, n, :, 1],
+                           np.cos(trajectories[i, n, :, 2]), np.sin(trajectories[i, n, :, 2]), width=0.002,
+                           color=color[color_idx], alpha=1.0)
+                color_idx = (color_idx + 1) % len(color)
+
+            if data_path is None:
+                plt.grid()
+                plt.show()
+            else:
+                fig.savefig("%s_m%02d.jpg" % (data_path, i))
+                logging.debug("Saved trajectories")
+
+            plt.close()
 
     def plot_true_traj(self, iter, n_sample, data_path=None):
 
@@ -217,7 +277,7 @@ class IterativeData(object):
 
             plt.close()
 
-    def plot_traj(self, bnn_model, iter, n_sample, data_path=None):
+    def plot_traj(self, bnn_model, iter, n_sample, data_path=None, real_env=None):
 
         n_sample = min(n_sample, self.n_training // self.n_timestep)
         # n_sample = min(n_sample, self.n_validate // self.n_timestep)
@@ -269,6 +329,13 @@ class IterativeData(object):
                            np.cos(trajectories[:, 2]), np.sin(trajectories[:, 2]), width=0.002,
                            color=color[color_idx], alpha=max(0.3, 1 - idx*0.1))
                 color_idx = (color_idx + 1) % len(color)
+
+            if real_env is not None:
+                real_env.reset()
+                for i in range(self.n_timestep - 1):
+                    action = set_actions.T[:, i]
+                    observation, reward, done, info = real_env.step(action)
+                    real_env.render(mode="rgb_array")
 
             if data_path is None:
                 plt.grid()
