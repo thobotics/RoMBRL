@@ -12,8 +12,8 @@ import pickle
 import numpy as np
 import tensorflow as tf
 from lib.utils.running_mean_std import RunningMeanStd
-from models.continual_bnn_dyn import BayesNeuralNetDynModel
-from models.continual_me_dyn import EnsembleNeuralNetDynModel
+from models.bnn_dyn import BayesNeuralNetDynModel
+from models.me_dyn import EnsembleNeuralNetDynModel
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 

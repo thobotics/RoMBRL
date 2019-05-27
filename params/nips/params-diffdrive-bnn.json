@@ -4,12 +4,12 @@
     "env": "diffdrive",
 
     "n_timestep": 200,
-    "sample_train_size": 2000,
-    "sample_valid_size": 1000,
-    "sweep_iters": 20,
-    "restore_dir": false,
+    "sample_train_size": 400,
+    "sample_valid_size": 100,
+    "sweep_iters": 40,
+    "restore_dir": null,
     "init_only": false,
-    "restore_dynamics": true,
+    "restore_dynamics": false,
     "restore_policy": false,
 
     "dynamics_params": {
@@ -35,7 +35,7 @@
           "run_normal": true,
           "normal_step_size": 1.0e-3,
           "normal_max_iters": 1000,
-          "step_size": 3.0e-3,
+          "step_size": 2.0e-3,
           "mdecay": 0.05,
           "burn_in_steps": 5000,
           "max_passes": 100000,
@@ -67,7 +67,7 @@
         "learning_rate": 1e-3,
         "log_every": 5,
         "num_iters_threshold": 25,
-        "max_iters": 100,
+        "max_iters": 50,
         "reset_non_increasing": 100,
         "stop_critereon": {
             "offset": 1e-05,
@@ -81,7 +81,7 @@
             "init_std": 1.0,
             "step_size": 0.01,
             "discount": 1.00,
-            "batch_size": 1000,
+            "batch_size": 4000,
             "reset": true
         },
         "batch_size": 200
