@@ -394,15 +394,18 @@ class BayesNeuralNetDynModel(object):
 
         """
 
-        log_batch = 3000
+        log_batch = 2000
+        n_tr = max(1, len(x_batch) // log_batch)
+        n_va = max(1, len(X_val) // log_batch)
+
         total_nll, total_mse = 0., 0.
         total_nll_val, total_mse_val = 0., 0.
 
-        for i in range(len(x_batch) // log_batch + 1):
+        for i in range(n_tr):
             nll, mse = self.session.run(
                 [self.Nll, self.Mse], feed_dict={
-                    self.X_Minibatch: x_batch[:log_batch*(i+1)],
-                    self.Y_Minibatch: y_batch[:log_batch*(i+1)],
+                    self.X_Minibatch: x_batch[log_batch * i:log_batch * (i + 1)],
+                    self.Y_Minibatch: y_batch[log_batch * i:log_batch * (i + 1)],
                     self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
                     self.n_datapoints: x_batch.shape[0],
                 }
@@ -411,11 +414,14 @@ class BayesNeuralNetDynModel(object):
             total_nll += nll
             total_mse += mse
 
-        for i in range(len(x_batch) // log_batch + 1):
+        total_nll /= n_tr
+        total_mse /= n_tr
+
+        for i in range(n_va):
             nll_val, mse_val = self.session.run(
                 [self.Nll, self.Mse], feed_dict={
-                    self.X_Minibatch: X_val[:log_batch*(i+1)],
-                    self.Y_Minibatch: y_val[:log_batch*(i+1)],
+                    self.X_Minibatch: X_val[log_batch * i:log_batch * (i + 1)],
+                    self.Y_Minibatch: y_val[log_batch * i:log_batch * (i + 1)],
                     self.Weight_Minibatch: np.zeros((self.batch_size, self.n_nets)),
                     self.n_datapoints: X_val.shape[0],
                 }
@@ -423,6 +429,9 @@ class BayesNeuralNetDynModel(object):
 
             total_nll_val += nll_val
             total_mse_val += mse_val
+
+        total_nll_val /= n_va
+        total_mse_val /= n_va
 
         seconds_elapsed = time() - start_time
 

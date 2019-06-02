@@ -15,7 +15,7 @@ import sys
 import os
 import argparse
 
-sys.path.append(os.path.abspath(os.path.join("lib", "pysgmcmc/")))
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "lib", "pysgmcmc")))
 
 from lib.utils.misc import *
 from lib.utils.rllab_env_rollout import IterativeData
