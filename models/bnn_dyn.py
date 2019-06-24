@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-    continual_bnn_dyn.py
+    bnn_dyn.py
     
     Created on  : February 03, 2019
         Author  : thobotics

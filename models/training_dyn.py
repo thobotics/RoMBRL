@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-    continual_training_dyn.py
+    training_dyn.py
     
     Created on  : February 26, 2019
         Author  : thobotics
@@ -13,6 +13,7 @@ import numpy as np
 import tensorflow as tf
 from lib.utils.running_mean_std import RunningMeanStd
 from models.bnn_dyn import BayesNeuralNetDynModel
+from models.svgd_dyn import SVGDNeuralNetDynModel
 from models.me_dyn import EnsembleNeuralNetDynModel
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
@@ -23,7 +24,7 @@ class TrainingDynamics(object):
                  session=None, scope="training_dynamics", model_type="BNN",
                  policy=None, action_bounds=None, dynamic_params=None, dynamic_opt_params=None):
 
-        assert model_type in ["BNN", "ME"]
+        assert model_type in ["BNN", "SVGD", "ME"]
 
         n_nets = dynamic_params["n_nets"]
         n_units = dynamic_params["hidden_layers"]
@@ -93,6 +94,18 @@ class TrainingDynamics(object):
                 dtype=tf.float32,
                 # sampler arguments for SGHMC
                 mdecay=0.05,
+            )
+        elif model_type == "SVGD":
+            self.model = SVGDNeuralNetDynModel(
+                session=self.tf_sess, tf_scope=self.tf_scope,
+                batch_size=self.batch_size, n_nets=n_nets,
+                activation=activation, n_units=n_units,
+                n_inputs=self.n_inputs, n_outputs=self.n_outputs,
+                scale=scale, a0=a0, b0=b0, a1=a1, b1=b1,
+                normalize_input=self.input_rms, normalize_output=self.output_rms,
+                dtype=tf.float32,
+                # sampler arguments for SGHMC
+                # mdecay=0.05,
             )
         else:
             self.model = EnsembleNeuralNetDynModel(
@@ -171,7 +184,7 @@ class TrainingDynamics(object):
 
         if isinstance(self.model, BayesNeuralNetDynModel):
             self.run_bnn(x_val, y_val, x_tr_new, y_tr_new, params["bnn"])
-        elif isinstance(self.model, EnsembleNeuralNetDynModel):
+        elif isinstance(self.model, EnsembleNeuralNetDynModel) or isinstance(self.model, SVGDNeuralNetDynModel):
             self.run_normal(x_val, y_val, x_tr_new, y_tr_new, params["me"])
 
     def run_bnn(self, x_val=None, y_val=None, x_tr_new=None, y_tr_new=None, bnn_params=None):

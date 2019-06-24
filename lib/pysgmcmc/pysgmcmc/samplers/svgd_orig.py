@@ -1,5 +1,5 @@
 import tensorflow as tf
-from pysgmcmc.tensor_utils import pdist, squareform, median, vectorize, uninitialized_params
+from pysgmcmc.tensor_utils import pdist, squareform, median
 from pysgmcmc.stepsize_schedules import ConstantStepsizeSchedule
 from pysgmcmc.samplers.base_classes import MCMCSampler
 
@@ -20,7 +20,7 @@ class SVGDSampler(MCMCSampler):
             `Stein Variational Gradient Descent: A General Purpose Bayesian Inference Algorithm. <https://arxiv.org/pdf/1608.04471>`_
 
     """
-    def __init__(self, particles, cost_fun, tf_scope="default", batch_generator=None,
+    def __init__(self, particles, cost_fun, batch_generator=None,
                  stepsize_schedule=ConstantStepsizeSchedule(0.1),
                  alpha=0.9, fudge_factor=1e-6, session=tf.get_default_session(),
                  dtype=tf.float64, seed=None):
@@ -80,22 +80,18 @@ class SVGDSampler(MCMCSampler):
 
         assert isinstance(alpha, (int, float))
         assert isinstance(fudge_factor, (int, float))
-        # assert callable(cost_fun)
+        assert callable(cost_fun)
 
-        # self.particles = tf.stack(particles)
+        self.particles = tf.stack(particles)
 
-        self.particles = particles
+        def cost_fun_wrapper(params):
+            return tf.map_fn(lambda particle: cost_fun(particle), self.particles)
 
-        def cost_fun_wrapper():
-            return [cost_fun(particle) for particle in particles]
-            # return tf.map_fn(lambda particle: cost_fun(particle), self.particles)
+        cost_fun_wrapper.__name__ = cost_fun.__name__
 
-        cost_fun_wrapper.__name__ = "potential_energy"  # cost_fun.__name__
-
-        self._init_basic(
+        super().__init__(
             params=particles,
-            cost_fun=cost_fun,  # cost_fun_wrapper,
-            tf_scope=tf_scope,
+            cost_fun=cost_fun_wrapper,
             batch_generator=batch_generator,
             session=session, seed=seed, dtype=dtype,
             stepsize_schedule=stepsize_schedule
@@ -109,15 +105,12 @@ class SVGDSampler(MCMCSampler):
             stepsize_schedule.initial_value, dtype=self.dtype, name="stepsize"
         )
 
-        stack_vectorized_params = tf.stack([par[0] for par in particles])
-
         self.n_particles = tf.cast(
-            # self.particles.shape[0], self.dtype
-            stack_vectorized_params.shape[0], self.dtype
+            self.particles.shape[0], self.dtype
         )
 
         historical_grad = tf.get_variable(
-            "historical_grad", stack_vectorized_params.shape, dtype=dtype,
+            "historical_grad", self.particles.shape, dtype=dtype,
             initializer=tf.zeros_initializer()
         )
 
@@ -125,14 +118,9 @@ class SVGDSampler(MCMCSampler):
             tf.variables_initializer([historical_grad, self.epsilon])
         )
 
-        # lnpgrad = tf.reshape(tf.squeeze(tf.gradients(self.cost, self.particles)), [-1, 1])
-        # lnpgrad = tf.reshape(tf.squeeze(tf.gradients(self.cost, particles)), [-1, 1])
-        grads = []
-        for i, cost in enumerate(cost_fun):
-            grads.append(tf.concat([vectorize(gradient) for gradient in tf.gradients(cost, particles[i])], axis=0))
-        lnpgrad = tf.reshape(tf.squeeze(grads), [-1, 1])
+        lnpgrad = tf.squeeze(tf.gradients(self.cost, self.particles))
 
-        kernel_matrix, kernel_gradients = self.svgd_kernel(stack_vectorized_params)
+        kernel_matrix, kernel_gradients = self.svgd_kernel(self.particles)
 
         grad_theta = tf.divide(
             tf.matmul(kernel_matrix, lnpgrad) + kernel_gradients,
@@ -149,100 +137,11 @@ class SVGDSampler(MCMCSampler):
             fudge_factor + tf.sqrt(historical_grad_t)
         )
 
-        # for i, param in enumerate(self.params):
-        #     self.theta_t[i] = tf.assign_sub(
-        #         param,
-        #         self.epsilon * adj_grad[i]
-        #     )
-
-        for i, particle in enumerate(self.particles):
-
-            # self.theta_t[i] = [None] * len(particle)
-            vectorized_Theta_t = tf.assign_sub(
-                self.vectorized_params[i], self.epsilon * adj_grad[i]
+        for i, param in enumerate(self.params):
+            self.theta_t[i] = tf.assign_sub(
+                param,
+                self.epsilon * adj_grad[i]
             )
-            start_idx = 0
-
-            for j, param in enumerate(particle):
-                flat_shape = tf.reduce_prod(param.shape)
-                vectorized_param = vectorized_Theta_t[start_idx:start_idx+flat_shape]
-                self.theta_t[i*len(particle) + j] = tf.assign(
-                    param,
-                    tf.reshape(vectorized_param, shape=param.shape),
-                    name="theta_t_%d_%d" % (i, j)
-                )
-                start_idx += flat_shape
-
-    def _init_basic(self, params, cost_fun, tf_scope="default", batch_generator=None,
-                 stepsize_schedule=ConstantStepsizeSchedule(0.01),
-                 session=tf.get_default_session(), dtype=tf.float64, seed=None):
-        # Sanitize inputs
-        assert batch_generator is None or hasattr(batch_generator, "__next__")
-        assert seed is None or isinstance(seed, int)
-
-        # assert isinstance(session, (tf.Session, tf.InteractiveSession))
-        assert isinstance(dtype, tf.DType)
-
-        # assert callable(cost_fun)
-
-        self.tf_scope = tf_scope
-
-        self.dtype = dtype
-
-        self.n_iterations = 0
-
-        self.seed = seed
-
-        assert hasattr(stepsize_schedule, "update")
-        assert hasattr(stepsize_schedule, "__next__")
-        assert hasattr(stepsize_schedule, "initial_value")
-
-        self.stepsize_schedule = stepsize_schedule
-
-        self.batch_generator = batch_generator
-        self.session = session
-
-        self.params = params
-
-        # set up costs
-        self.cost_fun = cost_fun
-        self.cost = cost_fun # cost_fun(self.params)
-
-        # compute vectorized clones of all parameters
-        with tf.variable_scope(self.tf_scope, reuse=tf.AUTO_REUSE):
-            # self.vectorized_params = [vectorize(param) for param in self.params]
-            self.vectorized_params = []
-
-            for i, param in enumerate(self.params):
-                # self.vectorized_params.append(tf.concat(
-                #     [tf.reshape(par.initialized_value(), (-1,)) for par in param], axis=0))
-                self.vectorized_params.append(tf.get_variable(
-                    initializer=tf.concat([tf.reshape(par.initialized_value(), (-1,)) for par in param], axis=0),
-                    name="%s/particle_%s" % (self.tf_scope, i)
-                ))
-
-            # self.vectorized_params = tf.stack(self.vectorized_params)
-
-            self.epsilon = tf.get_variable(
-                initializer=self.stepsize_schedule.initial_value,
-                dtype=self.dtype,
-                name="epsilon",
-                trainable=False
-            )
-
-        # Initialize uninitialized parameters before usage in any sampler.
-        init = tf.variables_initializer(
-            uninitialized_params(
-                session=self.session,
-                params=self.vectorized_params + [self.epsilon]
-                # params=self.params + self.vectorized_params + [self.epsilon]
-            )
-        )
-        self.session.run(init)
-
-        # query this later to determine the next sample
-        self.theta_t = [None] * len(params) * len(params[0])
-
 
     def svgd_kernel(self, particles):
         """ Calculate a kernel matrix with corresponding derivatives

@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-    continual_bnn_trpo.py
+    online_bnn_trpo.py
     
     Created on  : February 28, 2019
         Author  : thobotics
@@ -205,12 +205,22 @@ def main(argv):
 
     args = parser.parse_args()
 
-    params_dir = args.indir
-    log_dir = args.logdir
-    output_dir = args.outdir
-    env_name = args.env
-    gpu = args.gpu
-    policy = args.policy
+    # params_dir = args.indir
+    # log_dir = args.logdir
+    # output_dir = args.outdir
+    # env_name = args.env
+    # gpu = args.gpu
+    # policy = args.policy
+
+    # Default params
+    env_name = "swimmer"
+    model_type = "bnn"
+    policy_type = "mlp"
+    params_dir = "./params/nips/params-%s-%s-same.json" % (env_name, model_type)
+    output_dir = "./results/nips_test/%s/%s/online_%s_trpo/20" % (env_name, policy_type, model_type)
+    log_dir = "%s/log.txt" % output_dir
+    gpu = "0"
+    policy = policy_type
 
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu
 
