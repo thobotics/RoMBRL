@@ -330,10 +330,12 @@ class NNPolicy(object):
                                            write_meta_graph=False)
 
                 if j - min_idx > min_iter and mean_validation_cost - min_validation_cost > 1.0:  # tolerance
-                    logging.info("Stop at iteration %d and restore the current best at %d: %.3f"
-                                 % (j + 1, min_idx + 1, min_validation_cost))
-                    self.policy_saver.restore(self.tf_sess, os.path.join(self.log_dir, 'policy.ckpt'))
                     break
+
+        """ Log and restore """
+        logging.info("Stop at iteration %d and restore the current best at %d: %.3f"
+                     % (j + 1, min_idx + 1, min_validation_cost))
+        self.policy_saver.restore(self.tf_sess, os.path.join(self.log_dir, 'policy.ckpt'))
 
         min_real_cost = min(real_validation_costs)
         if min_real_cost < self.min_validation_cost:

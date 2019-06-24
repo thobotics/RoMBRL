@@ -205,22 +205,12 @@ def main(argv):
 
     args = parser.parse_args()
 
-    # params_dir = args.indir
-    # log_dir = args.logdir
-    # output_dir = args.outdir
-    # env_name = args.env
-    # gpu = args.gpu
-    # policy = args.policy
-
-    # Default params
-    env_name = "swimmer"
-    model_type = "bnn"
-    policy_type = "lstm"
-    params_dir = "./params/nips/params-%s-%s-same.json" % (env_name, model_type)
-    output_dir = "./results/nips/%s/%s/online_%s_trpo/0" % (env_name, policy_type, model_type)
-    log_dir = "%s/log.txt" % output_dir
-    gpu = "0"
-    policy = policy_type
+    params_dir = args.indir
+    log_dir = args.logdir
+    output_dir = args.outdir
+    env_name = args.env
+    gpu = args.gpu
+    policy = args.policy
 
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu
 
