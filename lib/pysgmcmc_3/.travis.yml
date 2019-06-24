@@ -1,0 +1,20 @@
+language: python
+python:
+    - "3.5"
+
+os:
+    - linux
+
+install:
+  - pip install --upgrade pip
+  - pip install cython
+  - travis_wait pip install -r requirements.txt
+  - pip install pytest-cov
+  - python setup.py install
+  - pip install coveralls 
+
+script: 
+    - bash ci_scripts/run_tests.sh
+
+after_success:
+    - coveralls
