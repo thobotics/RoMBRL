@@ -145,8 +145,8 @@ def run_main(params_dir, output_dir, policy_type):
         training.save(output_dir)
         logging.info("Saved dynamics %s" % output_dir)
 
-        data_generator.plot_traj(training, iter=itr, n_sample=10,
-                                 data_path=os.path.join(output_dir, 'bnn_trpo'))
+        # data_generator.plot_traj(training, iter=itr, n_sample=10,
+        #                          data_path=os.path.join(output_dir, 'bnn_trpo'))
 
         training._log_covariances()
 
@@ -162,73 +162,60 @@ def run_main(params_dir, output_dir, policy_type):
                                               " ".join(map(str, real_costs[:-1])),
                                               real_costs[-1]))
 
-        data_generator.plot_fictitious_traj(training, nn_policy,
-                                            data_path=os.path.join(output_dir, 'fict_samp_i%02d' % itr))
+        # data_generator.plot_fictitious_traj(training, nn_policy,
+        #                                     data_path=os.path.join(output_dir, 'fict_samp_i%02d' % itr))
 
         # Add data after training
         if itr > start_itr:
             training.add_data(x_tr, u_tr, y_tr, fit=False)
 
-        # TODO: Output as table
-
-    for itr in range(start_itr, end_iter):
-        data_generator.plot_traj(training, iter=itr, n_sample=10,
-                                 data_path=os.path.join(output_dir, 'all_bnn_trpo'))
+    # for itr in range(start_itr, end_iter):
+    #     data_generator.plot_traj(training, iter=itr, n_sample=10,
+    #                              data_path=os.path.join(output_dir, 'all_bnn_trpo'))
 
 
 def main(argv):
+
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('-i', '--indir',
-                        required=False,
-                        help="Params dir")
+    parser.add_argument('-a', '--params',
+                        required=True,
+                        help="Path to parameters file")
 
-    parser.add_argument('-o', '--outdir',
-                        required=False,
-                        help="Output dir")
+    parser.add_argument('-o', '--outputdir',
+                        required=True,
+                        help="Output directory")
 
     parser.add_argument('-l', '--logdir',
                         required=False,
-                        help="Log dir")
-
-    parser.add_argument('-e', '--env',
-                        required=False,
-                        help="Environment")
+                        help="Path to log file")
 
     parser.add_argument('-g', '--gpu',
                         required=False,
-                        help="Environment")
+                        default="0",
+                        help="GPU")
 
     parser.add_argument('-p', '--policy',
                         required=False,
-                        help="Environment")
+                        default="bnn",
+                        help="Policy type [bnn, lstm]")
 
     args = parser.parse_args()
 
-    # params_dir = args.indir
-    # log_dir = args.logdir
-    # output_dir = args.outdir
-    # env_name = args.env
-    # gpu = args.gpu
-    # policy = args.policy
-
-    # Default params
-    env_name = "swimmer"
-    model_type = "bnn"
-    policy_type = "mlp"
-    params_dir = "./params/nips/params-%s-%s-same.json" % (env_name, model_type)
-    output_dir = "./results/nips_test/%s/%s/online_%s_trpo/20" % (env_name, policy_type, model_type)
-    log_dir = "%s/log.txt" % output_dir
-    gpu = "0"
-    policy = policy_type
+    params_dir = args.params
+    log_dir = args.logdir
+    output_dir = args.outputdir
+    gpu = args.gpu
+    policy = args.policy
 
     os.environ["CUDA_VISIBLE_DEVICES"] = gpu
 
-    logging.basicConfig(filename=log_dir,
-                        filemode='w',
-                        format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
-                        datefmt='%H:%M:%S',
-                        level=logging.DEBUG)
+    if log_dir:
+        logging.basicConfig(filename=log_dir,
+                            filemode='w',
+                            format='%(asctime)s,%(msecs)d %(name)s %(levelname)s %(message)s',
+                            datefmt='%H:%M:%S',
+                            level=logging.DEBUG)
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
