@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 """
-    continual_bnn_trpo.py
+    bnn_trpo.py
     
     Created on  : February 28, 2019
         Author  : thobotics
