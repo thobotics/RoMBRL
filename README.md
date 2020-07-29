@@ -20,6 +20,6 @@ python online_bnn_trpo.py
     --policy	 POLICY  (optional) Policy type [bnn, lstm], default: bnn.
 ```
 
-The default parameters that can be used to reproduce our results are stored under directory `params/nips/`.
+The default parameters that can be used to reproduce our results are stored under directory `params/default/`.
 
 Trial data, dynamic functional samples as well as policy network will be saved each iteration under `OUTPUT` directory.
