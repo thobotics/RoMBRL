@@ -13,12 +13,14 @@ Other dependencies can be installed with `pip install -r requirements.txt`.
 Experiments for a particular environment can be run using:
 
 ```
-python online_bnn_trpo.py
+python ALGORITHM
     --params     PARAMS  (required) Path to parameters file.
     --outputdir  OUTPUT  (required) Output directory.
     --logdir     LOGDIR  (optional) Path to log file.
     --policy	 POLICY  (optional) Policy type [bnn, lstm], default: bnn.
 ```
+
+where `ALGORITHM` can be either `online_bnn_trpo.py` or `bnn_trpo.py`.
 
 The default parameters that can be used to reproduce our results are stored under directory `params/default/`.
 
