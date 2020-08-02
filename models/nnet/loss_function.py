@@ -4,8 +4,8 @@
     loss_function.py
     
     Created on  : April 05, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 
 import numpy as np

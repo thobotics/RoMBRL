@@ -4,8 +4,8 @@
     data_batches.py - Custom generate_batches for SSM
     
     Created on  : February 03, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 
 import numpy as np

@@ -4,8 +4,8 @@
     com_backward_ant_env.py
     
     Created on  : May 24, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 from rllab.envs.mujoco.mujoco_env import MujocoEnv
 from rllab.core.serializable import Serializable

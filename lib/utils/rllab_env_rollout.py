@@ -4,8 +4,8 @@
     rllab_env_rollout.py
     
     Created on  : March 06, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 
 import numpy as np

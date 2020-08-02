@@ -4,8 +4,8 @@
     bnn_env.py
     
     Created on  : February 21, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 import tensorflow as tf
 import numpy as np

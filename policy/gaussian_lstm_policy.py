@@ -4,8 +4,8 @@
     gaussian_lstm_policy.py
     
     Created on  : May 11, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 
 import numpy as np

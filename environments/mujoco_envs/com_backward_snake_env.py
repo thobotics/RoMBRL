@@ -4,8 +4,8 @@
     com_backward_snake_env.py
     
     Created on  : May 24, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 
 import numpy as np

@@ -4,8 +4,8 @@
     tf_distributions.py
     
     Created on  : March 14, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 
 # -*- coding: utf-8 -*-

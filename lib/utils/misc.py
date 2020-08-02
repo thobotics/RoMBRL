@@ -4,8 +4,8 @@
     miscellaneous.py
     
     Created on  : April 06, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 
 import json

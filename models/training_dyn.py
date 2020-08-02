@@ -4,8 +4,8 @@
     training_dyn.py
     
     Created on  : February 26, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 import logging
 import pickle

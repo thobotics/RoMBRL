@@ -4,8 +4,8 @@
     tensor_adapter.py
     
     Created on  : February 03, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 import numpy as np
 import tensorflow as tf

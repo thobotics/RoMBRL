@@ -4,6 +4,6 @@
     __init__.py
     
     Created on  : February 23, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """

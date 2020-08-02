@@ -4,8 +4,8 @@
     online_bnn_trpo.py
     
     Created on  : February 28, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 
 import tensorflow as tf

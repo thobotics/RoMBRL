@@ -4,8 +4,8 @@
     me_dyn.py
     
     Created on  : February 26, 2019
-        Author  : thobotics
-        Name    : Tai Hoang
+        Author  : anonymous
+        Name    : Anonymous
 """
 
 from collections import deque
